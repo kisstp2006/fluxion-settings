@@ -61,6 +61,7 @@ pub const Sub = enum {
     taskbar,
     desktop_icons,
     installed,
+    shortcuts,
     info,
     date_time,
     language,
@@ -77,6 +78,8 @@ sub: Sub = .none,
 /// The system bus: the brightness, the power mode, Bluetooth, the network.
 system: ?*dbus.Connection = null,
 pictures: Pictures = undefined,
+/// The shortcut whose keys are being chosen: the next keys pressed.
+recording: ?Store.Shortcut = null,
 /// A watch on the file the choices are kept in: the shell writes to it too.
 store_watch: ?std.c.fd_t = null,
 apps: ?apps_mod.Apps = null,
@@ -132,6 +135,7 @@ pub fn openAt(self: *Settings, link: []const u8) void {
         .{ .name = "notifications", .page = .system, .sub = .notifications },
         .{ .name = "power", .page = .system, .sub = .power },
         .{ .name = "about", .page = .system, .sub = .about },
+        .{ .name = "shortcuts", .page = .system, .sub = .shortcuts },
         .{ .name = "bluetooth", .page = .devices, .sub = .none },
         .{ .name = "network", .page = .network, .sub = .none },
         .{ .name = "wifi", .page = .network, .sub = .none },
@@ -211,14 +215,61 @@ fn systemWantsWrite(context: *anyopaque) bool {
     return if (self.system) |bus| bus.wantsWrite() else false;
 }
 
-fn key(context: *anyopaque, _: *Window, sym: xkb.Keysym) bool {
+fn key(context: *anyopaque, window: *Window, sym: xkb.Keysym) bool {
     const self: *Settings = @ptrCast(@alignCast(context));
+    if (self.recording) |which| {
+        self.recordKey(window, which, sym);
+        return true;
+    }
     // Back, out of a page inside an area: Alt+Left, or Escape.
     if (@intFromEnum(sym) == xkb.Keysym.Escape and self.sub != .none) {
         self.go(self.page, .none);
         return true;
     }
     return false;
+}
+
+/// A key pressed while a shortcut is being chosen: with its modifiers, the
+/// shortcut's keys.
+fn recordKey(self: *Settings, window: *Window, which: Store.Shortcut, sym: xkb.Keysym) void {
+    const code = @intFromEnum(sym);
+    const K = xkb.Keysym;
+    switch (code) {
+        // A modifier alone: the key it goes with is still to come.
+        K.Shift_L, K.Shift_R, K.Control_L, K.Control_R, K.Alt_L, K.Alt_R, K.Super_L, K.Super_R, K.Meta_L, K.Meta_R, K.ISO_Level3_Shift => return,
+        K.Escape => {
+            self.recording = null;
+            return;
+        },
+        K.BackSpace => {
+            self.store.shortcuts.getPtr(which).set("");
+            self.recording = null;
+            self.save();
+            return;
+        },
+        else => {},
+    }
+    const ctrl = window.modifierHeld("Control");
+    const alt = window.modifierHeld("Mod1");
+    const super = window.modifierHeld("Mod4");
+    const shift = window.modifierHeld("Shift");
+    // Without Ctrl, Alt or the Windows key it would take a key from typing.
+    if (!ctrl and !alt and !super) return;
+    var name_buffer: [64]u8 = undefined;
+    const n = xkb.Keysym.getName(xkb.Keysym.toLower(sym), &name_buffer, name_buffer.len);
+    if (n <= 0) return;
+    var name = name_buffer[0..@intCast(n)];
+    if (name.len == 1) name[0] = std.ascii.toUpper(name[0]);
+    var buffer: [64]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buffer);
+    if (super) w.writeAll("Super+") catch return;
+    if (ctrl) w.writeAll("Ctrl+") catch return;
+    if (alt) w.writeAll("Alt+") catch return;
+    if (shift) w.writeAll("Shift+") catch return;
+    w.writeAll(name) catch return;
+    self.store.shortcuts.getPtr(which).set(w.buffered());
+    self.recording = null;
+    self.save();
 }
 
 // -------------------------------------------------------------------------
@@ -298,6 +349,7 @@ pub fn subTitle(sub: Sub) []const u8 {
         .notifications => "Notifications",
         .power => "Power",
         .about => "About",
+        .shortcuts => "Keyboard shortcuts",
         .background => "Background",
         .colors => "Colors",
         .taskbar => "Taskbar",
@@ -352,6 +404,7 @@ fn searchResults(self: *Settings, kit: *Kit, query: []const u8) void {
         .{ .page = .system, .sub = .sound, .title = "Sound", .words = "volume speakers output audio mute hang hangerő" },
         .{ .page = .system, .sub = .notifications, .title = "Notifications", .words = "do not disturb toasts alerts értesítések" },
         .{ .page = .system, .sub = .power, .title = "Power", .words = "screen off sleep battery energy mode performance energia" },
+        .{ .page = .system, .sub = .shortcuts, .title = "Keyboard shortcuts", .words = "keyboard shortcuts hotkeys keys microphone mute gyorsbillentyű billentyűparancs" },
         .{ .page = .system, .sub = .about, .title = "About", .words = "device name processor memory ram version kernel specifications névjegy" },
         .{ .page = .devices, .sub = .none, .title = "Bluetooth & devices", .words = "bluetooth mouse keyboard headphones paired" },
         .{ .page = .network, .sub = .none, .title = "Network & internet", .words = "wifi wi-fi ethernet connection network hálózat" },

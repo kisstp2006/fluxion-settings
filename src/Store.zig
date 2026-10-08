@@ -61,6 +61,68 @@ screen_off_minutes: u32 = 5,
 taskbar: Taskbar = .{},
 /// The system's icons on the desktop - Windows' Desktop Icon Settings.
 desktop_icons: DesktopIcons = .{},
+/// Keys chosen for what the shell does, from anywhere: "Super+Alt+K", or
+/// nothing for none.
+shortcuts: std.EnumArray(Shortcut, Combo) = .initFill(.{}),
+mic_mute_sound: bool = true,
+
+/// What a shortcut can do - as the shell knows them.
+pub const Shortcut = enum {
+    mic_mute,
+    volume_up,
+    volume_down,
+    volume_mute,
+    play_pause,
+    next_track,
+    previous_track,
+    task_manager,
+    files,
+    settings,
+    terminal,
+
+    pub fn default(self: Shortcut) []const u8 {
+        return switch (self) {
+            .mic_mute => "Super+Alt+K",
+            .task_manager => "Ctrl+Shift+Escape",
+            .files => "Super+E",
+            .settings => "Super+I",
+            .terminal => "Ctrl+Alt+T",
+            else => "",
+        };
+    }
+
+    pub fn title(self: Shortcut) []const u8 {
+        return switch (self) {
+            .mic_mute => "Mute or unmute the microphone",
+            .volume_up => "Volume up",
+            .volume_down => "Volume down",
+            .volume_mute => "Mute or unmute the sound",
+            .play_pause => "Play or pause",
+            .next_track => "Next track",
+            .previous_track => "Previous track",
+            .task_manager => "Task Manager",
+            .files => "File Explorer",
+            .settings => "Settings",
+            .terminal => "Terminal",
+        };
+    }
+};
+
+pub const Combo = struct {
+    text: [32]u8 = @splat(0),
+    len: u8 = 0,
+    given: bool = false,
+
+    pub fn get(self: *const Combo, which: Shortcut) []const u8 {
+        return if (self.given) self.text[0..self.len] else which.default();
+    }
+
+    pub fn set(self: *Combo, text: []const u8) void {
+        self.len = @intCast(@min(text.len, self.text.len));
+        @memcpy(self.text[0..self.len], text[0..self.len]);
+        self.given = true;
+    }
+};
 
 pub const DesktopIcons = struct {
     recycle_bin: bool = true,
@@ -184,6 +246,10 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "do_not_disturb")) self.do_not_disturb = eql(u8, value, "true");
     } else if (eql(u8, section, "power")) {
         if (eql(u8, key, "screen_off_minutes")) self.screen_off_minutes = std.fmt.parseInt(u32, value, 10) catch self.screen_off_minutes;
+    } else if (eql(u8, section, "shortcuts")) {
+        if (eql(u8, key, "mic_mute_sound")) {
+            self.mic_mute_sound = !eql(u8, value, "false");
+        } else if (std.meta.stringToEnum(Shortcut, key)) |which| self.shortcuts.getPtr(which).set(value);
     } else if (eql(u8, section, "taskbar")) {
         const t = &self.taskbar;
         if (eql(u8, key, "alignment")) t.alignment = std.meta.stringToEnum(Taskbar.Alignment, value) orelse t.alignment;
@@ -249,8 +315,14 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
 pub fn save(self: *const Store, io: std.Io) void {
     var path_buffer: [512]u8 = undefined;
     const file = path(&path_buffer) orelse return;
-    var ours_buffer: [4096]u8 = undefined;
-    const ours = self.format(&ours_buffer) catch return;
+    var format_buffer: [4096]u8 = undefined;
+    var ours_buffer: [6144]u8 = undefined;
+    var ours_writer: std.Io.Writer = .fixed(&ours_buffer);
+    ours_writer.writeAll(self.format(&format_buffer) catch return) catch return;
+    // The shortcuts, after the rest: one line each.
+    ours_writer.print("\n[shortcuts]\nmic_mute_sound={}\n", .{self.mic_mute_sound}) catch return;
+    for (std.enums.values(Shortcut)) |which| ours_writer.print("{t}={s}\n", .{ which, self.shortcuts.get(which).get(which) }) catch return;
+    const ours = ours_writer.buffered();
     // Written into the file as it is, a key at a time: what the shell keeps
     // there itself - the desktop's View, its Sort by - stays.
     var a_buffer: [16384]u8 = undefined;

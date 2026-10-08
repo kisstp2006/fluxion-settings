@@ -475,6 +475,13 @@ fn keyboardListener(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Window) vo
     }
 }
 
+/// Whether the modifier `name` - xkb's "Control", "Shift", "Mod1" for
+/// Alt, "Mod4" for Super - is held.
+pub fn modifierHeld(self: *const Window, name: [*:0]const u8) bool {
+    const state = self.xkb_state orelse return false;
+    return state.modNameIsActive(name, @enumFromInt(xkb.State.Component.mods_effective)) == 1;
+}
+
 /// A key, as the keyboard typed it: the content's first, then the text
 /// field's - an edit by where the key is, or the text it types.
 fn typeKey(self: *Window, code: u32) void {

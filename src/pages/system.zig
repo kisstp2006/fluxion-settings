@@ -11,6 +11,7 @@ const widgets = @import("fluxion_widgets");
 const Kit = widgets.Kit;
 
 const Settings = @import("../Settings.zig");
+const Store = @import("../Store.zig");
 
 const log = std.log.scoped(.system);
 
@@ -32,6 +33,13 @@ pub const State = struct {
     sinks: [8]Sink = undefined,
     sink_count: usize = 0,
     sink_choice: Kit.Dropdown = .{},
+    // Input: the microphones, not the outputs' monitors.
+    input_volume: f32 = 0,
+    input_muted: bool = false,
+    input_known: bool = false,
+    sources: [8]Sink = undefined,
+    source_count: usize = 0,
+    source_choice: Kit.Dropdown = .{},
 
     // Display.
     backlight: ?Backlight = null,
@@ -103,6 +111,7 @@ pub fn draw(app: *Settings, kit: *Kit) void {
         .notifications => notifications(app, kit),
         .power => power(app, kit),
         .about => about(app, kit),
+        .shortcuts => shortcuts(app, kit),
         else => overview(app, kit),
     }
 }
@@ -112,6 +121,7 @@ fn overview(app: *Settings, kit: *Kit) void {
     app.linkCard(kit, .sound, .speaker_2, "Volume, output device");
     app.linkCard(kit, .notifications, .alert, "Alerts from apps and the system, do not disturb");
     app.linkCard(kit, .power, .power, "Screen off, power mode");
+    app.linkCard(kit, .shortcuts, .keyboard, "Keys for the microphone, the sound, and apps");
     app.linkCard(kit, .about, .info, "Device specifications, the system");
 }
 
@@ -215,6 +225,67 @@ fn sound(app: *Settings, kit: *Kit) void {
     kit.cardBegin("sound/mute", .{ .icon = .speaker_mute, .title = "Mute" });
     if (kit.toggle("sound/mute/toggle", &s.muted, .{})) pactl(app, &.{ "pactl", "set-sink-mute", "@DEFAULT_SINK@", if (s.muted) "1" else "0" });
     _ = kit.cardEnd(false);
+
+    kit.section("Input");
+    if (s.source_count == 0 or !s.input_known) {
+        kit.label("No microphone found.", .body, kit.theme.palette.text_secondary);
+        return;
+    }
+    kit.cardBegin("mic/device", .{ .icon = .mic, .title = "Choose a device for speaking or recording", .description = "Apps might have their own settings" });
+    var names: [8][]const u8 = undefined;
+    for (s.sources[0..s.source_count], 0..) |*source, i| names[i] = source.description.get();
+    if (kit.dropdown("mic/device/list", &s.source_choice, names[0..s.source_count], .fixed(260))) {
+        pactl(app, &.{ "pactl", "set-default-source", s.sources[s.source_choice.selected].name.get() });
+        readSound(app);
+    }
+    _ = kit.cardEnd(false);
+    kit.cardBegin("mic/volume", .{ .icon = if (s.input_muted) .mic_off else .mic, .title = "Microphone volume" });
+    const mic_before: u32 = @intFromFloat(@round(s.input_volume));
+    if (kit.slider("mic/volume/slider", &s.input_volume, .{ .min = 0, .max = 100, .step = 1, .width = .fixed(220) })) {
+        const now: u32 = @intFromFloat(@round(s.input_volume));
+        if (now != mic_before) {
+            var buffer: [8]u8 = undefined;
+            pactl(app, &.{ "pactl", "set-source-volume", "@DEFAULT_SOURCE@", std.fmt.bufPrint(&buffer, "{d}%", .{now}) catch return });
+        }
+    }
+    _ = kit.cardEnd(false);
+    kit.cardBegin("mic/mute", .{ .icon = .mic_off, .title = "Mute the microphone", .description = "A shortcut can do it too: System > Keyboard shortcuts" });
+    if (kit.toggle("mic/mute/toggle", &s.input_muted, .{})) pactl(app, &.{ "pactl", "set-source-mute", "@DEFAULT_SOURCE@", if (s.input_muted) "1" else "0" });
+    _ = kit.cardEnd(false);
+}
+
+// -------------------------------------------------------------------------
+// Keyboard shortcuts
+// -------------------------------------------------------------------------
+
+/// Keys for what the desktop does, from anywhere: a click on one's keys,
+/// then the keys to use - Backspace for none, Escape to leave it.
+fn shortcuts(app: *Settings, kit: *Kit) void {
+    const u = kit.ui;
+    const p = &kit.theme.palette;
+    kit.label("Select a shortcut, then press the keys to use - with Ctrl, Alt or the Windows key. Backspace removes it; Escape leaves it as it was.", .body, p.text_secondary);
+    kit.section("Microphone");
+    shortcutCard(app, kit, .mic_mute);
+    kit.cardBegin("sc/mic-sound", .{ .icon = .speaker_2, .title = "Play a sound", .description = "As the microphone is muted, and heard again" });
+    if (kit.toggle("sc/mic-sound/toggle", &app.store.mic_mute_sound, .{})) app.save();
+    _ = kit.cardEnd(false);
+    kit.section("Sound and media");
+    inline for (.{ .volume_up, .volume_down, .volume_mute, .play_pause, .next_track, .previous_track }) |which| shortcutCard(app, kit, which);
+    kit.section("Apps");
+    inline for (.{ .task_manager, .files, .settings, .terminal }) |which| shortcutCard(app, kit, which);
+    _ = u;
+}
+
+fn shortcutCard(app: *Settings, kit: *Kit, which: Store.Shortcut) void {
+    const id = kit.print("sc/{t}", .{which});
+    kit.cardBegin(id, .{ .icon = .keyboard, .title = which.title() });
+    const recording = app.recording == which;
+    const keys = app.store.shortcuts.get(which).get(which);
+    const label = if (recording) "Press the keys…" else if (keys.len == 0) "None" else keys;
+    if (kit.button(kit.print("sc/{t}/keys", .{which}), label, .{ .kind = if (recording) .accent else .standard })) {
+        app.recording = if (recording) null else which;
+    }
+    _ = kit.cardEnd(false);
 }
 
 fn pactl(app: *Settings, argv: []const []const u8) void {
@@ -244,6 +315,53 @@ fn readSound(app: *Settings) void {
     s.muted = std.mem.endsWith(u8, std.mem.trimEnd(u8, mute.stdout, " \n"), "yes");
     s.sound_known = true;
     readSinks(app);
+    readInput(app);
+}
+
+/// The default microphone's volume and mute, and the microphones there are.
+fn readInput(app: *Settings) void {
+    const s = &app.system_state;
+    const gpa = app.gpa;
+    s.input_known = false;
+    const volume = std.process.run(gpa, app.io, .{ .argv = &.{ "pactl", "get-source-volume", "@DEFAULT_SOURCE@" } }) catch return;
+    defer gpa.free(volume.stdout);
+    defer gpa.free(volume.stderr);
+    const percent_at = std.mem.indexOfScalar(u8, volume.stdout, '%') orelse return;
+    var start = percent_at;
+    while (start > 0 and std.ascii.isDigit(volume.stdout[start - 1])) start -= 1;
+    s.input_volume = @floatFromInt(std.fmt.parseInt(u32, volume.stdout[start..percent_at], 10) catch return);
+    const mute = std.process.run(gpa, app.io, .{ .argv = &.{ "pactl", "get-source-mute", "@DEFAULT_SOURCE@" } }) catch return;
+    defer gpa.free(mute.stdout);
+    defer gpa.free(mute.stderr);
+    s.input_muted = std.mem.endsWith(u8, std.mem.trimEnd(u8, mute.stdout, " \n"), "yes");
+    s.input_known = true;
+
+    s.source_count = 0;
+    const list = std.process.run(gpa, app.io, .{ .argv = &.{ "pactl", "--format=json", "list", "sources" } }) catch return;
+    defer gpa.free(list.stdout);
+    defer gpa.free(list.stderr);
+    const default = std.process.run(gpa, app.io, .{ .argv = &.{ "pactl", "get-default-source" } }) catch return;
+    defer gpa.free(default.stdout);
+    defer gpa.free(default.stderr);
+    const default_name = std.mem.trim(u8, default.stdout, " \n");
+    const parsed = std.json.parseFromSlice(std.json.Value, gpa, list.stdout, .{}) catch return;
+    defer parsed.deinit();
+    if (parsed.value != .array) return;
+    for (parsed.value.array.items) |item| {
+        if (s.source_count == s.sources.len) break;
+        if (item != .object) continue;
+        const name = item.object.get("name") orelse continue;
+        const description = item.object.get("description") orelse name;
+        if (name != .string or description != .string) continue;
+        // An output's monitor is not something to speak into.
+        if (std.mem.endsWith(u8, name.string, ".monitor")) continue;
+        var source: Sink = .{};
+        source.name.set(name.string);
+        source.description.set(description.string);
+        if (std.mem.eql(u8, name.string, default_name)) s.source_choice.selected = s.source_count;
+        s.sources[s.source_count] = source;
+        s.source_count += 1;
+    }
 }
 
 fn readSinks(app: *Settings) void {
