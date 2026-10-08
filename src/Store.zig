@@ -22,6 +22,14 @@
 //!
 //! [power]
 //! screen_off_minutes=5
+//!
+//! [taskbar]
+//! alignment=center
+//! search=icon
+//! task_view=true
+//! badges=true
+//! flashing=true
+//! show_desktop_corner=true
 //! ```
 //!
 //! Written whole, to a file beside it renamed over it: a reader never sees
@@ -50,6 +58,20 @@ night_light_kelvin: u32 = 4500,
 do_not_disturb: bool = false,
 /// Nought for never.
 screen_off_minutes: u32 = 5,
+taskbar: Taskbar = .{},
+
+/// Personalization ▸ Taskbar.
+pub const Taskbar = struct {
+    alignment: Alignment = .center,
+    search: Search = .icon,
+    task_view: bool = true,
+    badges: bool = true,
+    flashing: bool = true,
+    show_desktop_corner: bool = true,
+
+    pub const Alignment = enum { center, left };
+    pub const Search = enum { hide, icon };
+};
 
 pub fn wallpaper(self: *const Store) ?[]const u8 {
     return if (self.wallpaper_len > 0) self.wallpaper_buffer[0..self.wallpaper_len] else null;
@@ -148,6 +170,14 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "do_not_disturb")) self.do_not_disturb = eql(u8, value, "true");
     } else if (eql(u8, section, "power")) {
         if (eql(u8, key, "screen_off_minutes")) self.screen_off_minutes = std.fmt.parseInt(u32, value, 10) catch self.screen_off_minutes;
+    } else if (eql(u8, section, "taskbar")) {
+        const t = &self.taskbar;
+        if (eql(u8, key, "alignment")) t.alignment = std.meta.stringToEnum(Taskbar.Alignment, value) orelse t.alignment;
+        if (eql(u8, key, "search")) t.search = std.meta.stringToEnum(Taskbar.Search, value) orelse t.search;
+        if (eql(u8, key, "task_view")) t.task_view = !eql(u8, value, "false");
+        if (eql(u8, key, "badges")) t.badges = !eql(u8, value, "false");
+        if (eql(u8, key, "flashing")) t.flashing = !eql(u8, value, "false");
+        if (eql(u8, key, "show_desktop_corner")) t.show_desktop_corner = !eql(u8, value, "false");
     }
 }
 
@@ -179,7 +209,21 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\[power]
         \\screen_off_minutes={d}
         \\
-    , .{ self.mode, self.accent & 0xFFFFFF, self.wallpaper() orelse "", self.night_light, self.night_light_kelvin, self.do_not_disturb, self.screen_off_minutes });
+        \\[taskbar]
+        \\alignment={t}
+        \\search={t}
+        \\task_view={}
+        \\badges={}
+        \\flashing={}
+        \\show_desktop_corner={}
+        \\
+    , .{
+        self.mode,                        self.accent & 0xFFFFFF,  self.wallpaper() orelse "",
+        self.night_light,                 self.night_light_kelvin, self.do_not_disturb,
+        self.screen_off_minutes,          self.taskbar.alignment,  self.taskbar.search,
+        self.taskbar.task_view,           self.taskbar.badges,     self.taskbar.flashing,
+        self.taskbar.show_desktop_corner,
+    });
 }
 
 /// Write it, whole: to a file beside it, renamed over it.
@@ -203,6 +247,8 @@ pub fn save(self: *const Store, io: std.Io) void {
 
 test "what is written is read back" {
     var store: Store = .{ .mode = .light, .accent = 0xFF0E8A7D, .night_light = true, .screen_off_minutes = 10 };
+    store.taskbar.alignment = .left;
+    store.taskbar.badges = false;
     store.setWallpaper("/usr/share/backgrounds/lake.jpg");
     var buffer: [4096]u8 = undefined;
     const text = try store.format(&buffer);
@@ -213,4 +259,7 @@ test "what is written is read back" {
     try std.testing.expectEqualStrings("/usr/share/backgrounds/lake.jpg", back.wallpaper().?);
     try std.testing.expect(back.night_light);
     try std.testing.expectEqual(@as(u32, 10), back.screen_off_minutes);
+    try std.testing.expectEqual(Taskbar.Alignment.left, back.taskbar.alignment);
+    try std.testing.expect(!back.taskbar.badges);
+    try std.testing.expect(back.taskbar.flashing);
 }

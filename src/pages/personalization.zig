@@ -14,7 +14,12 @@ const Store = @import("../Store.zig");
 
 pub const State = struct {
     mode_choice: Kit.Dropdown = .{},
+    search_choice: Kit.Dropdown = .{},
+    alignment_choice: Kit.Dropdown = .{},
 };
+
+const search_names = [_][]const u8{ "Hide", "Search icon only" };
+const alignment_names = [_][]const u8{ "Center", "Left" };
 
 /// Accents to choose from: the default and a few of the colours Windows
 /// offers, which are colours, not anybody's brand.
@@ -28,11 +33,47 @@ pub fn draw(app: *Settings, kit: *Kit) void {
     switch (app.sub) {
         .background => background(app, kit),
         .colors => colors(app, kit),
+        .taskbar => taskbar(app, kit),
         else => {
             app.linkCard(kit, .background, .image, "Background image");
             app.linkCard(kit, .colors, .color, "Light or dark, the accent color");
+            app.linkCard(kit, .taskbar, .tab_desktop, "Taskbar items, alignment, badges");
         },
     }
+}
+
+/// What is on the taskbar and how it behaves - as Windows 11's page has
+/// it, as far as the taskbar here does it.
+fn taskbar(app: *Settings, kit: *Kit) void {
+    const s = &app.personalization_state;
+    const t = &app.store.taskbar;
+    kit.section("Taskbar items");
+    kit.cardBegin("tb/search", .{ .icon = .search, .title = "Search", .description = "The search button beside start" });
+    if (!s.search_choice.open) s.search_choice.selected = @intFromEnum(t.search);
+    if (kit.dropdown("tb/search/list", &s.search_choice, &search_names, .fixed(200))) {
+        t.search = @enumFromInt(s.search_choice.selected);
+        app.save();
+    }
+    _ = kit.cardEnd(false);
+    toggleCard(app, kit, "tb/taskview", .square_multiple, "Task view", "Your windows and desktops, at a glance", &t.task_view);
+
+    kit.section("Taskbar behaviors");
+    kit.cardBegin("tb/alignment", .{ .icon = .tab_desktop, .title = "Taskbar alignment", .description = "Where start and the apps sit" });
+    if (!s.alignment_choice.open) s.alignment_choice.selected = @intFromEnum(t.alignment);
+    if (kit.dropdown("tb/alignment/list", &s.alignment_choice, &alignment_names, .fixed(160))) {
+        t.alignment = @enumFromInt(s.alignment_choice.selected);
+        app.save();
+    }
+    _ = kit.cardEnd(false);
+    toggleCard(app, kit, "tb/badges", .alert_badge, "Show badges on taskbar apps", "Counts of what is new, on an app's button", &t.badges);
+    toggleCard(app, kit, "tb/flashing", .alert, "Show flashing on taskbar apps", "An app's button lit when it wants your attention", &t.flashing);
+    toggleCard(app, kit, "tb/corner", .desktop, "Select the far corner of the taskbar to show the desktop", "", &t.show_desktop_corner);
+}
+
+fn toggleCard(app: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Name, title: []const u8, description: []const u8, value: *bool) void {
+    kit.cardBegin(id, .{ .icon = icon, .title = title, .description = description });
+    if (kit.toggle(kit.print("{s}/toggle", .{id}), value, .{})) app.save();
+    _ = kit.cardEnd(false);
 }
 
 fn background(app: *Settings, kit: *Kit) void {
