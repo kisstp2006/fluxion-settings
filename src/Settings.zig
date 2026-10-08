@@ -31,6 +31,7 @@ const Kit = widgets.Kit;
 
 const Window = @import("Window.zig");
 const Store = @import("Store.zig");
+const Motion = @import("Motion.zig");
 const Pictures = @import("Pictures.zig");
 const apps_mod = @import("apps.zig");
 
@@ -78,6 +79,9 @@ sub: Sub = .none,
 /// The system bus: the brightness, the power mode, Bluetooth, the network.
 system: ?*dbus.Connection = null,
 pictures: Pictures = undefined,
+/// A page coming in, as Windows 11's Settings brings one: up into place,
+/// and clear.
+page_motion: Motion = .{ .duration = 333, .ease = .decelerate },
 /// The shortcut whose keys are being chosen: the next keys pressed.
 recording: ?Store.Shortcut = null,
 /// A watch on the file the choices are kept in: the shell writes to it too.
@@ -156,6 +160,7 @@ pub fn go(self: *Settings, page: Page, sub: Sub) void {
     self.page = page;
     self.sub = sub;
     self.window.layout.scrollTo("content/scroll", 0, 0);
+    self.page_motion.begin();
     self.opened();
     self.window.redraw();
 }
@@ -304,7 +309,16 @@ fn draw(context: *anyopaque, window: *Window, kit: *Kit) void {
     defer u.close();
     u.open(.{ .id = "content/scroll", .width = .grow, .height = .grow, .direction = .top_to_bottom, .clip = .scrollY });
     defer u.close();
-    u.open(.{ .width = .grow, .direction = .top_to_bottom, .padding = .trbl(24, 36, 36, 36), .gap = 4 });
+    const t = self.page_motion.progress();
+    if (self.page_motion.running()) self.window.redraw();
+    u.open(.{
+        .width = .grow,
+        .direction = .top_to_bottom,
+        .padding = .trbl(24, 36, 36, 36),
+        .gap = 4,
+        .translate = .{ .x = 0, .y = Motion.mix(28, 0, t) },
+        .opacity = self.page_motion.fade(0, 167),
+    });
     defer u.close();
     self.header(kit);
     switch (self.page) {
