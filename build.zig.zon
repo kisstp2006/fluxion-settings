@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: BSD-2-Clause
+
+.{
+    .name = .fluxion_settings,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x9beec05fbd06cdff,
+    .dependencies = .{
+        // The look: theme, widgets, fonts, icons - and through it Fluxion UI
+        // and its CPU renderer. Local while they are written side by side.
+        .fluxion_widgets = .{ .path = "../../fluxion/fluxion-widgets" },
+        // Pictures: the wallpapers to choose from, and the icons.
+        .fluxion_image = .{ .path = "../../fluxion/fluxion-image" },
+        // The message bus: the network, Bluetooth, the power, the clock.
+        .fluxion_dbus = .{ .path = "../../fluxion/fluxion-dbus" },
+        .wayland = .{
+            .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.6.0.tar.gz",
+            .hash = "wayland-0.6.0-lQa1kqz8AQADQmdNJsNhLoNHcnEGEUjrOaPV-dtEnEmX",
+        },
+        .xkbcommon = .{
+            .url = "https://codeberg.org/ifreund/zig-xkbcommon/archive/v0.3.0.tar.gz",
+            .hash = "xkbcommon-0.3.0-VDqIe3K9AQB2fG5ZeRcMC9i7kfrp5m2rWgLrmdNn9azr",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "data",
+        "README.md",
+        "LICENSE",
+    },
+}

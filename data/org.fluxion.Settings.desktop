@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+Name[hu]=Beállítások
+Comment=The look of the desktop, the screen, the sound, the network and the rest
+Comment[hu]=Az asztal megjelenése, a kijelző, a hang, a hálózat és a többi
+Icon=preferences-system
+Exec=fluxion-settings %u
+Categories=Settings;System;
+Keywords=settings;preferences;control panel;beállítások;
+StartupWMClass=org.fluxion.Settings
+OnlyShowIn=Fluxion;
