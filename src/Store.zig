@@ -133,6 +133,7 @@ pub const DesktopIcons = struct {
 
 /// Personalization ▸ Taskbar.
 pub const Taskbar = struct {
+    position: Position = .bottom,
     alignment: Alignment = .center,
     search: Search = .icon,
     task_view: bool = true,
@@ -141,6 +142,7 @@ pub const Taskbar = struct {
     show_desktop_corner: bool = true,
 
     pub const Alignment = enum { center, left };
+    pub const Position = enum { bottom, top, left, right };
     pub const Search = enum { hide, icon };
 };
 
@@ -253,6 +255,7 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
     } else if (eql(u8, section, "taskbar")) {
         const t = &self.taskbar;
         if (eql(u8, key, "alignment")) t.alignment = std.meta.stringToEnum(Taskbar.Alignment, value) orelse t.alignment;
+        if (eql(u8, key, "position")) t.position = std.meta.stringToEnum(Taskbar.Position, value) orelse t.position;
         if (eql(u8, key, "search")) t.search = std.meta.stringToEnum(Taskbar.Search, value) orelse t.search;
         if (eql(u8, key, "task_view")) t.task_view = !eql(u8, value, "false");
         if (eql(u8, key, "badges")) t.badges = !eql(u8, value, "false");
@@ -294,6 +297,7 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\screen_off_minutes={d}
         \\
         \\[taskbar]
+        \\position={t}
         \\alignment={t}
         \\search={t}
         \\task_view={}
@@ -302,12 +306,12 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\show_desktop_corner={}
         \\
     , .{
-        self.mode,                      self.accent & 0xFFFFFF,           self.wallpaper() orelse "",
-        self.desktop_icons.recycle_bin, self.desktop_icons.computer,      self.desktop_icons.home,
-        self.desktop_icons.network,     self.night_light,                 self.night_light_kelvin,
-        self.do_not_disturb,            self.screen_off_minutes,          self.taskbar.alignment,
-        self.taskbar.search,            self.taskbar.task_view,           self.taskbar.badges,
-        self.taskbar.flashing,          self.taskbar.show_desktop_corner,
+        self.mode,                      self.accent & 0xFFFFFF,      self.wallpaper() orelse "",
+        self.desktop_icons.recycle_bin, self.desktop_icons.computer, self.desktop_icons.home,
+        self.desktop_icons.network,     self.night_light,            self.night_light_kelvin,
+        self.do_not_disturb,            self.screen_off_minutes,     self.taskbar.position,
+        self.taskbar.alignment,         self.taskbar.search,         self.taskbar.task_view,
+        self.taskbar.badges,            self.taskbar.flashing,       self.taskbar.show_desktop_corner,
     });
 }
 

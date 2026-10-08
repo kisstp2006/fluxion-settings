@@ -16,10 +16,12 @@ pub const State = struct {
     mode_choice: Kit.Dropdown = .{},
     search_choice: Kit.Dropdown = .{},
     alignment_choice: Kit.Dropdown = .{},
+    position_choice: Kit.Dropdown = .{},
 };
 
 const search_names = [_][]const u8{ "Hide", "Search icon only" };
 const alignment_names = [_][]const u8{ "Center", "Left" };
+const position_names = [_][]const u8{ "Bottom", "Top", "Left", "Right" };
 
 /// Accents to choose from: the default and a few of the colours Windows
 /// offers, which are colours, not anybody's brand.
@@ -60,6 +62,13 @@ fn taskbar(app: *Settings, kit: *Kit) void {
     toggleCard(app, kit, "tb/taskview", .square_multiple, "Task view", "Your windows and desktops, at a glance", &t.task_view);
 
     kit.section("Taskbar behaviors");
+    kit.cardBegin("tb/position", .{ .icon = .tab_desktop, .title = "Taskbar position", .description = "The edge of the screen it is along" });
+    if (!s.position_choice.open) s.position_choice.selected = @intFromEnum(t.position);
+    if (kit.dropdown("tb/position/list", &s.position_choice, &position_names, .fixed(160))) {
+        t.position = @enumFromInt(s.position_choice.selected);
+        app.save();
+    }
+    _ = kit.cardEnd(false);
     kit.cardBegin("tb/alignment", .{ .icon = .tab_desktop, .title = "Taskbar alignment", .description = "Where start and the apps sit" });
     if (!s.alignment_choice.open) s.alignment_choice.selected = @intFromEnum(t.alignment);
     if (kit.dropdown("tb/alignment/list", &s.alignment_choice, &alignment_names, .fixed(160))) {
