@@ -34,10 +34,12 @@ pub fn draw(app: *Settings, kit: *Kit) void {
         .background => background(app, kit),
         .colors => colors(app, kit),
         .taskbar => taskbar(app, kit),
+        .desktop_icons => desktopIcons(app, kit),
         else => {
             app.linkCard(kit, .background, .image, "Background image");
             app.linkCard(kit, .colors, .color, "Light or dark, the accent color");
             app.linkCard(kit, .taskbar, .tab_desktop, "Taskbar items, alignment, badges");
+            app.linkCard(kit, .desktop_icons, .desktop, "Recycle Bin, This PC, and the other icons on the desktop");
         },
     }
 }
@@ -68,6 +70,18 @@ fn taskbar(app: *Settings, kit: *Kit) void {
     toggleCard(app, kit, "tb/badges", .alert_badge, "Show badges on taskbar apps", "Counts of what is new, on an app's button", &t.badges);
     toggleCard(app, kit, "tb/flashing", .alert, "Show flashing on taskbar apps", "An app's button lit when it wants your attention", &t.flashing);
     toggleCard(app, kit, "tb/corner", .desktop, "Select the far corner of the taskbar to show the desktop", "", &t.show_desktop_corner);
+}
+
+/// Which of the system's icons are on the desktop - Windows' Desktop Icon
+/// Settings. The size and the arranging are the desktop's own menu's.
+fn desktopIcons(app: *Settings, kit: *Kit) void {
+    const d = &app.store.desktop_icons;
+    kit.section("Desktop icons");
+    toggleCard(app, kit, "di/recycle", .delete, "Recycle Bin", "What was deleted, until it is emptied", &d.recycle_bin);
+    toggleCard(app, kit, "di/computer", .desktop, "This PC", "The whole of this computer's files", &d.computer);
+    toggleCard(app, kit, "di/home", .folder, "User's files", "Your home folder", &d.home);
+    toggleCard(app, kit, "di/network", .globe, "Network", "Other computers on the network", &d.network);
+    kit.label("Right-click the desktop for the icons' size, and how they are arranged and sorted.", .caption, kit.theme.palette.text_secondary);
 }
 
 fn toggleCard(app: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Name, title: []const u8, description: []const u8, value: *bool) void {

@@ -59,6 +59,15 @@ do_not_disturb: bool = false,
 /// Nought for never.
 screen_off_minutes: u32 = 5,
 taskbar: Taskbar = .{},
+/// The system's icons on the desktop - Windows' Desktop Icon Settings.
+desktop_icons: DesktopIcons = .{},
+
+pub const DesktopIcons = struct {
+    recycle_bin: bool = true,
+    computer: bool = false,
+    home: bool = false,
+    network: bool = false,
+};
 
 /// Personalization ▸ Taskbar.
 pub const Taskbar = struct {
@@ -163,6 +172,11 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "accent")) self.accent = parseColour(value) orelse self.accent;
     } else if (eql(u8, section, "desktop")) {
         if (eql(u8, key, "wallpaper")) self.setWallpaper(value);
+        const d = &self.desktop_icons;
+        if (eql(u8, key, "icon_recycle_bin")) d.recycle_bin = !eql(u8, value, "false");
+        if (eql(u8, key, "icon_computer")) d.computer = eql(u8, value, "true");
+        if (eql(u8, key, "icon_home")) d.home = eql(u8, value, "true");
+        if (eql(u8, key, "icon_network")) d.network = eql(u8, value, "true");
     } else if (eql(u8, section, "display")) {
         if (eql(u8, key, "night_light")) self.night_light = eql(u8, value, "true");
         if (eql(u8, key, "night_light_kelvin")) self.night_light_kelvin = std.fmt.parseInt(u32, value, 10) catch self.night_light_kelvin;
@@ -198,6 +212,10 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\
         \\[desktop]
         \\wallpaper={s}
+        \\icon_recycle_bin={}
+        \\icon_computer={}
+        \\icon_home={}
+        \\icon_network={}
         \\
         \\[display]
         \\night_light={}
@@ -218,11 +236,12 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\show_desktop_corner={}
         \\
     , .{
-        self.mode,                        self.accent & 0xFFFFFF,  self.wallpaper() orelse "",
-        self.night_light,                 self.night_light_kelvin, self.do_not_disturb,
-        self.screen_off_minutes,          self.taskbar.alignment,  self.taskbar.search,
-        self.taskbar.task_view,           self.taskbar.badges,     self.taskbar.flashing,
-        self.taskbar.show_desktop_corner,
+        self.mode,                      self.accent & 0xFFFFFF,           self.wallpaper() orelse "",
+        self.desktop_icons.recycle_bin, self.desktop_icons.computer,      self.desktop_icons.home,
+        self.desktop_icons.network,     self.night_light,                 self.night_light_kelvin,
+        self.do_not_disturb,            self.screen_off_minutes,          self.taskbar.alignment,
+        self.taskbar.search,            self.taskbar.task_view,           self.taskbar.badges,
+        self.taskbar.flashing,          self.taskbar.show_desktop_corner,
     });
 }
 
@@ -230,8 +249,26 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
 pub fn save(self: *const Store, io: std.Io) void {
     var path_buffer: [512]u8 = undefined;
     const file = path(&path_buffer) orelse return;
-    var text_buffer: [4096]u8 = undefined;
-    const text = self.format(&text_buffer) catch return;
+    var ours_buffer: [4096]u8 = undefined;
+    const ours = self.format(&ours_buffer) catch return;
+    // Written into the file as it is, a key at a time: what the shell keeps
+    // there itself - the desktop's View, its Sort by - stays.
+    var a_buffer: [16384]u8 = undefined;
+    var b_buffer: [16384]u8 = undefined;
+    var text: []const u8 = std.Io.Dir.cwd().readFile(io, file, &a_buffer) catch "";
+    var into: *[16384]u8 = &b_buffer;
+    var section: []const u8 = "";
+    var lines = std.mem.splitScalar(u8, ours, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (line[0] == '[') {
+            section = std.mem.trim(u8, line, "[]");
+            continue;
+        }
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        text = rewrite(into, text, section, line[0..eq], line[eq + 1 ..]) catch return;
+        into = if (into == &b_buffer) &a_buffer else &b_buffer;
+    }
     const dir = std.fs.path.dirname(file) orelse return;
     std.Io.Dir.cwd().createDirPath(io, dir) catch {};
     var temp_buffer: [520]u8 = undefined;
@@ -243,6 +280,68 @@ pub fn save(self: *const Store, io: std.Io) void {
     std.Io.Dir.rename(std.Io.Dir.cwd(), temp, std.Io.Dir.cwd(), file, io) catch |err| {
         log.err("could not put {s} in place: {t}", .{ file, err });
     };
+}
+
+/// `text` with `key` in `section` set to `value`: changed where it is,
+/// added at the end of its section, or the section added with it - the
+/// rest as it was.
+pub fn rewrite(buffer: []u8, text: []const u8, section: []const u8, key: []const u8, value: []const u8) ![]const u8 {
+    var w: std.Io.Writer = .fixed(buffer);
+    var current: []const u8 = "";
+    var seen = false;
+    var done = false;
+    var blanks: usize = 0;
+    const body = std.mem.trimEnd(u8, text, "\n");
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (if (body.len > 0) lines.next() else null) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        const ours = std.mem.eql(u8, current, section);
+        if (line.len > 0 and line[0] == '[') {
+            if (ours and seen and !done) {
+                try w.print("{s}={s}\n", .{ key, value });
+                done = true;
+            }
+            try w.splatByteAll('\n', blanks);
+            blanks = 0;
+            current = std.mem.trim(u8, line, "[]");
+            if (std.mem.eql(u8, current, section)) seen = true;
+            try w.print("{s}\n", .{raw});
+            continue;
+        }
+        if (ours and line.len == 0) {
+            blanks += 1;
+            continue;
+        }
+        try w.splatByteAll('\n', blanks);
+        blanks = 0;
+        if (ours and !done) if (std.mem.indexOfScalar(u8, line, '=')) |eq| {
+            if (std.mem.eql(u8, std.mem.trim(u8, line[0..eq], " "), key)) {
+                try w.print("{s}={s}\n", .{ key, value });
+                done = true;
+                continue;
+            }
+        };
+        try w.print("{s}\n", .{raw});
+    }
+    if (!done) {
+        if (seen and std.mem.eql(u8, current, section)) {
+            try w.print("{s}={s}\n", .{ key, value });
+        } else {
+            if (w.end > 0) try w.writeByte('\n');
+            try w.print("[{s}]\n{s}={s}\n", .{ section, key, value });
+        }
+    }
+    try w.splatByteAll('\n', blanks);
+    return w.buffered();
+}
+
+test "a key the shell keeps is kept when Settings writes its own" {
+    var a: [512]u8 = undefined;
+    var b: [512]u8 = undefined;
+    const shells = "[desktop]\nwallpaper=/a.jxl\nicon_size=large\n";
+    const one = try rewrite(&a, shells, "desktop", "wallpaper", "/b.png");
+    const two = try rewrite(&b, one, "appearance", "mode", "light");
+    try std.testing.expectEqualStrings("[desktop]\nwallpaper=/b.png\nicon_size=large\n\n[appearance]\nmode=light\n", two);
 }
 
 test "what is written is read back" {
