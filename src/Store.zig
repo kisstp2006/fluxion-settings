@@ -26,8 +26,13 @@
 //!
 //! Written whole, to a file beside it renamed over it: a reader never sees
 //! half of it.
+//!
+//! The shell writes to it as well - night light and do not disturb are
+//! switched from quick settings too - so it is watched here the same way,
+//! on its folder, and read again when it changes.
 
 const std = @import("std");
+const linux = std.os.linux;
 
 const Store = @This();
 
@@ -60,6 +65,45 @@ pub fn path(buffer: []u8) ?[]const u8 {
     if (std.c.getenv("XDG_CONFIG_HOME")) |dir| return std.fmt.bufPrint(buffer, "{s}/fluxion/settings.ini", .{std.mem.span(dir)}) catch null;
     const home = std.c.getenv("HOME") orelse return null;
     return std.fmt.bufPrint(buffer, "{s}/.config/fluxion/settings.ini", .{std.mem.span(home)}) catch null;
+}
+
+/// A watch on the file's folder, for `changed`; null where there is none.
+pub fn watch(io: std.Io) ?std.c.fd_t {
+    var buffer: [512]u8 = undefined;
+    const file = path(&buffer) orelse return null;
+    const dir = std.fs.path.dirname(file) orelse return null;
+    std.Io.Dir.cwd().createDirPath(io, dir) catch {};
+    var dir_z: [513]u8 = undefined;
+    @memcpy(dir_z[0..dir.len], dir);
+    dir_z[dir.len] = 0;
+    const fd: isize = @bitCast(linux.inotify_init1(linux.IN.NONBLOCK | linux.IN.CLOEXEC));
+    if (fd < 0) return null;
+    const mask = linux.IN.CLOSE_WRITE | linux.IN.MOVED_TO | linux.IN.DELETE | linux.IN.MOVED_FROM;
+    const added: isize = @bitCast(linux.inotify_add_watch(@intCast(fd), @ptrCast(&dir_z), mask));
+    if (added < 0) {
+        _ = std.c.close(@intCast(fd));
+        return null;
+    }
+    return @intCast(fd);
+}
+
+/// Whether what the watch heard was of this file.
+pub fn changed(fd: std.c.fd_t) bool {
+    var ours = false;
+    var buffer: [4096]u8 align(@alignOf(linux.inotify_event)) = undefined;
+    while (true) {
+        const n = std.c.read(fd, &buffer, buffer.len);
+        if (n <= 0) break;
+        var at: usize = 0;
+        while (at + @sizeOf(linux.inotify_event) <= @as(usize, @intCast(n))) {
+            const event: *const linux.inotify_event = @ptrCast(@alignCast(&buffer[at]));
+            if (event.getName()) |name| {
+                if (std.mem.eql(u8, name, "settings.ini")) ours = true;
+            }
+            at += @sizeOf(linux.inotify_event) + event.len;
+        }
+    }
+    return ours;
 }
 
 /// What is in the file, or the defaults for what is not.
