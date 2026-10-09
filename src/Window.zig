@@ -72,6 +72,11 @@ background_effects: ?*ext.BackgroundEffectManagerV1 = null,
 effect: ?*ext.BackgroundEffectSurfaceV1 = null,
 /// Whether the window is drawn see-through, for Mica to show.
 mica: bool = false,
+/// Windows 10's look with transparency on: the navigation pane is acrylic,
+/// as Windows 10's Settings' is - the strip down the left `glass_strip`
+/// wide is glass, the rest solid.
+acrylic: bool = false,
+glass_strip: u32 = 0,
 pointer: ?*wl.Pointer = null,
 keyboard: ?*wl.Keyboard = null,
 
@@ -225,21 +230,42 @@ pub fn setTheme(self: *Window, mode: widgets.Mode, accent: widgets.theme.Accent,
 /// has it - Windows 11's, with transparency on: a region of all of it, and
 /// drawn see-through from then on. Otherwise solid.
 fn updateMica(self: *Window) void {
-    const wants = self.theme.look.transparency and self.theme.look.style == .win11;
-    if (wants == self.mica) return;
-    if (!wants) {
+    const look = self.theme.look;
+    const mica = look.transparency and look.style == .win11;
+    const acrylic = look.transparency and look.style == .win10;
+    if (mica == self.mica and acrylic == self.acrylic) return;
+    self.mica = mica;
+    self.acrylic = acrylic;
+    self.glass_strip = 0;
+    if (!mica) {
+        // Acrylic's strip is set as the pane is drawn.
         if (self.effect) |e| e.setBlurRegion(null);
-        self.mica = false;
         return;
     }
-    const manager = self.background_effects orelse return;
-    const effect = self.effect orelse (manager.getBackgroundEffect(self.surface) catch return);
-    self.effect = effect;
+    const effect = self.backgroundEffect() orelse return;
     const region = (self.compositor orelse return).createRegion() catch return;
     defer region.destroy();
     region.add(0, 0, 1 << 15, 1 << 15);
     effect.setBlurRegion(region);
-    self.mica = true;
+}
+
+fn backgroundEffect(self: *Window) ?*ext.BackgroundEffectSurfaceV1 {
+    if (self.effect) |e| return e;
+    const manager = self.background_effects orelse return null;
+    self.effect = manager.getBackgroundEffect(self.surface) catch return null;
+    return self.effect;
+}
+
+/// The navigation pane `width` across, glass in Windows 10's look: told
+/// with the next frame drawn.
+pub fn setGlassStrip(self: *Window, width: u32) void {
+    if (!self.acrylic or width == self.glass_strip) return;
+    self.glass_strip = width;
+    const effect = self.backgroundEffect() orelse return;
+    const region = (self.compositor orelse return).createRegion() catch return;
+    defer region.destroy();
+    region.add(0, 0, @intCast(width), 1 << 15);
+    effect.setBlurRegion(region);
 }
 
 /// Wait on `watch` too, and call it when it is ready.
@@ -459,7 +485,7 @@ fn render(self: *Window) void {
     self.input_since_drawn = false;
 
     // See-through under Mica; the theme's base colour where there is none.
-    const clear: ui.Color = if (self.mica) .transparent else self.theme.palette.solid_base;
+    const clear: ui.Color = if (self.mica or self.acrylic) .transparent else self.theme.palette.solid_base;
     // Nothing drawn differently: nothing painted, nothing handed over. Asked
     // to look again, it hears of the next frame all the same.
     const hash = hashCommands(commands, buffer.width, buffer.height, self.icons.generation, clear);

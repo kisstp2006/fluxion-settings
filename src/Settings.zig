@@ -468,11 +468,18 @@ fn draw(context: *anyopaque, window: *Window, kit: *Kit) void {
     }
     // Mica's tint over the blur behind; with none - Windows 10's look, or
     // transparency off - the window's own solid colour.
-    u.open(.{ .width = .grow, .height = .grow, .background_color = if (window.mica) widgets.material.tint(kit.theme.mode) else p.solid_base });
+    // Windows 10's acrylic pane: the window clear, the pane tinted over the
+    // blur behind it, the page solid.
+    u.open(.{ .width = .grow, .height = .grow, .background_color = if (window.mica) widgets.material.tint(kit.theme.mode) else if (window.acrylic) .transparent else p.solid_base });
     defer u.close();
     // Over everything: the question whether to keep the screens' new mode.
     defer display_page.keepDialog(self, kit);
     self.navigation(kit);
+    if (window.acrylic) {
+        window.setGlassStrip(@intFromFloat(@round(self.navWidth())));
+        u.open(.{ .width = .grow, .height = .grow, .background_color = p.solid_base });
+    }
+    defer if (window.acrylic) u.close();
     kit.layerBegin("content", .{});
     defer u.close();
     // The title stays where it is; the cards scroll under it.
@@ -593,7 +600,17 @@ fn navigation(self: *Settings, kit: *Kit) void {
     const width = self.navWidth();
     // How open it is: what fades the names in and out.
     const open = std.math.clamp((width - nav_compact) / (nav_width - nav_compact), 0, 1);
-    u.open(.{ .id = "nav", .width = .fixed(width), .height = .grow, .direction = .top_to_bottom, .padding = .all(8), .gap = 4, .clip = .both });
+    u.open(.{
+        .id = "nav",
+        .width = .fixed(width),
+        .height = .grow,
+        .direction = .top_to_bottom,
+        .padding = .all(8),
+        .gap = 4,
+        .clip = .both,
+        // Windows 10's acrylic: its tint over the blur.
+        .background_color = if (self.window.acrylic) (if (kit.theme.mode == .dark) widgets.argb(0x991F1F1F) else widgets.argb(0x99E6E6E6)) else .transparent,
+    });
     defer u.close();
     // The button that folds it and opens it.
     {
