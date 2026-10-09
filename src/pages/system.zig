@@ -12,6 +12,7 @@ const Kit = widgets.Kit;
 
 const Settings = @import("../Settings.zig");
 const Store = @import("../Store.zig");
+const Sun = @import("../Sun.zig");
 const display_page = @import("display.zig");
 
 const log = std.log.scoped(.system);
@@ -46,6 +47,11 @@ pub const State = struct {
     backlight: ?Backlight = null,
     brightness: f32 = 0,
     night_strength: f32 = 50,
+    night_on_choice: Kit.Dropdown = .{},
+    night_off_choice: Kit.Dropdown = .{},
+    /// Where the time zone is, for sunset and sunrise: read once.
+    sun_place: ?Sun.Place = null,
+    sun_read: bool = false,
 
     // Power.
     screen_off: Kit.Dropdown = .{},
@@ -176,7 +182,85 @@ pub fn brightnessAndColor(app: *Settings, kit: *Kit) void {
         app.save();
     }
     _ = kit.cardEnd(false);
+    nightSchedule(app, kit);
 }
+
+/// Every half hour of the day, for the schedule's times.
+const half_hours = blk: {
+    @setEvalBranchQuota(100_000);
+    var names: [48][]const u8 = undefined;
+    for (0..48) |i| names[i] = std.fmt.comptimePrint("{d:0>2}:{d:0>2}", .{ i / 2, (i % 2) * 30 });
+    break :blk names;
+};
+
+/// Night light by itself, as Windows schedules it: from sunset to sunrise
+/// where the time zone is, or between two times.
+fn nightSchedule(app: *Settings, kit: *Kit) void {
+    const s = &app.system_state;
+    const store = &app.store;
+    var scheduled = store.night_schedule != .off;
+    kit.cardBegin("night-schedule", .{ .title = "Schedule night light" });
+    if (kit.toggle("night/schedule", &scheduled, .{})) {
+        store.night_schedule = if (scheduled) .sunset else .off;
+        app.save();
+    }
+    _ = kit.cardEnd(false);
+    if (!scheduled) return;
+
+    if (!s.sun_read) {
+        s.sun_read = true;
+        s.sun_place = Sun.placeOfTimeZone(app.io);
+    }
+    const sun_text = if (s.sun_place) |place| blk: {
+        var tm: Tm = undefined;
+        var t = time(null);
+        _ = localtime_r(&t, &tm);
+        const times = Sun.times(place, @intCast(tm.yday), @intCast(@divTrunc(tm.gmtoff, 60))) orelse break :blk "Sunset to sunrise";
+        const set: u32 = @intCast(times.set);
+        const rise: u32 = @intCast(times.rise);
+        break :blk kit.print("Sunset to sunrise ({d:0>2}:{d:0>2} - {d:0>2}:{d:0>2})", .{ set / 60, set % 60, rise / 60, rise % 60 });
+    } else "Sunset to sunrise";
+    const u = kit.ui;
+    u.open(.{ .width = .grow, .direction = .top_to_bottom, .gap = 8, .padding = .trbl(4, 16, 12, 56) });
+    defer u.close();
+    if (kit.radio("night/sunset", store.night_schedule == .sunset, sun_text, .{ .disabled = s.sun_place == null })) {
+        store.night_schedule = .sunset;
+        app.save();
+    }
+    if (kit.radio("night/hours", store.night_schedule == .hours, "Set hours", .{})) {
+        store.night_schedule = .hours;
+        app.save();
+    }
+    if (store.night_schedule != .hours) return;
+    u.open(.{ .gap = 24, .padding = .trbl(4, 0, 0, 28), .align_y = .center });
+    defer u.close();
+    inline for (.{ .{ "Turn on", "night/on", &s.night_on_choice, &store.night_on }, .{ "Turn off", "night/off", &s.night_off_choice, &store.night_off } }) |row| {
+        u.open(.{ .gap = 8, .align_y = .center });
+        defer u.close();
+        kit.label(row[0], .body, kit.theme.palette.text_primary);
+        if (!row[2].open) row[2].selected = row[3].* / 30;
+        if (kit.dropdown(row[1], row[2], &half_hours, .fixed(110))) {
+            row[3].* = @intCast(row[2].selected * 30);
+            app.save();
+        }
+    }
+}
+
+const Tm = extern struct {
+    sec: c_int,
+    min: c_int,
+    hour: c_int,
+    mday: c_int,
+    mon: c_int,
+    year: c_int,
+    wday: c_int,
+    yday: c_int,
+    isdst: c_int,
+    gmtoff: c_long,
+    zone: ?[*:0]const u8,
+};
+extern fn time(out: ?*i64) i64;
+extern fn localtime_r(t: *const i64, out: *Tm) ?*Tm;
 
 fn readBacklight(app: *Settings) void {
     const s = &app.system_state;

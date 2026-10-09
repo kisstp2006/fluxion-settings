@@ -63,6 +63,11 @@ wallpaper_buffer: [512]u8 = undefined,
 wallpaper_len: usize = 0,
 night_light: bool = false,
 night_light_kelvin: u32 = 4500,
+/// Night light by itself: never, sunset to sunrise, or between two times
+/// - minutes after midnight.
+night_schedule: NightSchedule = .off,
+night_on: u16 = 21 * 60,
+night_off: u16 = 7 * 60,
 do_not_disturb: bool = false,
 /// Nought for never.
 screen_off_minutes: u32 = 5,
@@ -75,6 +80,8 @@ shortcuts: std.EnumArray(Shortcut, Combo) = .initFill(.{}),
 mic_mute_sound: bool = true,
 /// What is copied kept, for Super+V.
 clipboard_history: bool = false,
+
+pub const NightSchedule = enum { off, sunset, hours };
 
 pub const Look = struct {
     style: Style = .win11,
@@ -297,6 +304,9 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
     } else if (eql(u8, section, "display")) {
         if (eql(u8, key, "night_light")) self.night_light = eql(u8, value, "true");
         if (eql(u8, key, "night_light_kelvin")) self.night_light_kelvin = std.fmt.parseInt(u32, value, 10) catch self.night_light_kelvin;
+        if (eql(u8, key, "night_light_schedule")) self.night_schedule = std.meta.stringToEnum(NightSchedule, value) orelse self.night_schedule;
+        if (eql(u8, key, "night_light_on")) self.night_on = parseTime(value) orelse self.night_on;
+        if (eql(u8, key, "night_light_off")) self.night_off = parseTime(value) orelse self.night_off;
     } else if (eql(u8, section, "clipboard")) {
         if (eql(u8, key, "history")) self.clipboard_history = eql(u8, value, "true");
     } else if (eql(u8, section, "notifications")) {
@@ -318,6 +328,15 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "show_desktop_corner")) t.show_desktop_corner = !eql(u8, value, "false");
         if (eql(u8, key, "seconds")) t.seconds = eql(u8, value, "true");
     }
+}
+
+/// "21:30" as minutes after midnight.
+pub fn parseTime(text: []const u8) ?u16 {
+    const colon = std.mem.indexOfScalar(u8, text, ':') orelse return null;
+    const h = std.fmt.parseInt(u16, text[0..colon], 10) catch return null;
+    const m = std.fmt.parseInt(u16, text[colon + 1 ..], 10) catch return null;
+    if (h > 23 or m > 59) return null;
+    return h * 60 + m;
 }
 
 /// "#RRGGBB" as 0xFFRRGGBB.
@@ -350,6 +369,9 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\[display]
         \\night_light={}
         \\night_light_kelvin={d}
+        \\night_light_schedule={t}
+        \\night_light_on={d:0>2}:{d:0>2}
+        \\night_light_off={d:0>2}:{d:0>2}
         \\
         \\[notifications]
         \\do_not_disturb={}
@@ -368,18 +390,21 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\seconds={}
         \\
     , .{
-        self.mode,                        self.accent & 0xFFFFFF,
-        self.look.style,                  self.look.rounded_corners,
-        self.look.window_corners,         self.look.floating,
-        self.look.transparency,           self.wallpaper() orelse "",
-        self.desktop_icons.recycle_bin,   self.desktop_icons.computer,
-        self.desktop_icons.home,          self.desktop_icons.network,
-        self.night_light,                 self.night_light_kelvin,
-        self.do_not_disturb,              self.screen_off_minutes,
-        self.taskbar.position,            self.taskbar.alignment,
-        self.taskbar.search,              self.taskbar.task_view,
-        self.taskbar.badges,              self.taskbar.flashing,
-        self.taskbar.show_desktop_corner, self.taskbar.seconds,
+        self.mode,                      self.accent & 0xFFFFFF,
+        self.look.style,                self.look.rounded_corners,
+        self.look.window_corners,       self.look.floating,
+        self.look.transparency,         self.wallpaper() orelse "",
+        self.desktop_icons.recycle_bin, self.desktop_icons.computer,
+        self.desktop_icons.home,        self.desktop_icons.network,
+        self.night_light,               self.night_light_kelvin,
+        self.night_schedule,            self.night_on / 60,
+        self.night_on % 60,             self.night_off / 60,
+        self.night_off % 60,            self.do_not_disturb,
+        self.screen_off_minutes,        self.taskbar.position,
+        self.taskbar.alignment,         self.taskbar.search,
+        self.taskbar.task_view,         self.taskbar.badges,
+        self.taskbar.flashing,          self.taskbar.show_desktop_corner,
+        self.taskbar.seconds,
     });
 }
 

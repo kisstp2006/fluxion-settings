@@ -38,4 +38,5 @@ test {
     _ = @import("pages/system.zig");
     _ = @import("Displays.zig");
     _ = @import("apps.zig");
+    _ = @import("Sun.zig");
 }
