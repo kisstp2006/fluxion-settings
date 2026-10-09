@@ -69,6 +69,12 @@ night_schedule: NightSchedule = .off,
 night_on: u16 = 21 * 60,
 night_off: u16 = 7 * 60,
 do_not_disturb: bool = false,
+/// How a mouse and a touchpad move and scroll.
+mouse: Pointer = .{ .tap_to_click = false },
+touchpad: Pointer = .{},
+/// The keyboard layouts to switch between: "hu,us".
+layouts_buffer: [128]u8 = undefined,
+layouts_len: usize = 0,
 /// A picture, or a slideshow of a folder's pictures.
 background: Background = .picture,
 slideshow_buffer: [512]u8 = undefined,
@@ -94,6 +100,15 @@ pub const NightSchedule = enum { off, sunset, hours };
 
 pub const Background = enum { picture, slideshow };
 
+pub const Pointer = struct {
+    speed: i32 = 0,
+    scroll: u32 = 100,
+    natural_scrolling: bool = false,
+    tap_to_click: bool = true,
+    left_handed: bool = false,
+    disable_while_typing: bool = true,
+};
+
 pub const FocusRules = struct {
     hours: bool = false,
     from: u16 = 22 * 60,
@@ -112,6 +127,11 @@ pub const Look = struct {
     floating: bool = true,
     /// Acrylic and Mica.
     transparency: bool = true,
+    /// What title bars are made of, and the glass of apps that ask for it.
+    title_bars: Material = .solid,
+    windows: Material = .auto,
+
+    pub const Material = enum { auto, solid, mica, acrylic };
 
     pub const Style = enum { win11, win10 };
 };
@@ -213,6 +233,8 @@ pub const Taskbar = struct {
     show_desktop_corner: bool = true,
     /// The clock with its seconds.
     seconds: bool = false,
+    /// Aero Peek on the far corner.
+    peek: bool = true,
 
     pub const Alignment = enum { center, left };
     pub const Position = enum { bottom, top, left, right };
@@ -221,6 +243,15 @@ pub const Taskbar = struct {
 
 pub fn wallpaper(self: *const Store) ?[]const u8 {
     return if (self.wallpaper_len > 0) self.wallpaper_buffer[0..self.wallpaper_len] else null;
+}
+
+pub fn layouts(self: *const Store) []const u8 {
+    return self.layouts_buffer[0..self.layouts_len];
+}
+
+pub fn setLayouts(self: *Store, text: []const u8) void {
+    self.layouts_len = @min(text.len, self.layouts_buffer.len);
+    @memcpy(self.layouts_buffer[0..self.layouts_len], text[0..self.layouts_len]);
 }
 
 pub fn slideshowFolder(self: *const Store) ?[]const u8 {
@@ -322,6 +353,8 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "window_corners")) l.window_corners = !eql(u8, value, "false");
         if (eql(u8, key, "floating")) l.floating = !eql(u8, value, "false");
         if (eql(u8, key, "transparency")) l.transparency = !eql(u8, value, "false");
+        if (eql(u8, key, "title_bar_material")) l.title_bars = std.meta.stringToEnum(Look.Material, value) orelse l.title_bars;
+        if (eql(u8, key, "window_material")) l.windows = std.meta.stringToEnum(Look.Material, value) orelse l.windows;
     } else if (eql(u8, section, "desktop")) {
         if (eql(u8, key, "wallpaper")) self.setWallpaper(value);
         if (eql(u8, key, "background")) self.background = std.meta.stringToEnum(Background, value) orelse self.background;
@@ -339,6 +372,16 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "night_light_schedule")) self.night_schedule = std.meta.stringToEnum(NightSchedule, value) orelse self.night_schedule;
         if (eql(u8, key, "night_light_on")) self.night_on = parseTime(value) orelse self.night_on;
         if (eql(u8, key, "night_light_off")) self.night_off = parseTime(value) orelse self.night_off;
+    } else if (eql(u8, section, "mouse") or eql(u8, section, "touchpad")) {
+        const t = if (eql(u8, section, "mouse")) &self.mouse else &self.touchpad;
+        if (eql(u8, key, "speed")) t.speed = std.fmt.parseInt(i32, value, 10) catch t.speed;
+        if (eql(u8, key, "scroll")) t.scroll = std.fmt.parseInt(u32, value, 10) catch t.scroll;
+        if (eql(u8, key, "natural_scrolling")) t.natural_scrolling = eql(u8, value, "true");
+        if (eql(u8, key, "tap_to_click")) t.tap_to_click = eql(u8, value, "true");
+        if (eql(u8, key, "left_handed")) t.left_handed = eql(u8, value, "true");
+        if (eql(u8, key, "disable_while_typing")) t.disable_while_typing = eql(u8, value, "true");
+    } else if (eql(u8, section, "keyboard")) {
+        if (eql(u8, key, "layouts")) self.setLayouts(value);
     } else if (eql(u8, section, "clipboard")) {
         if (eql(u8, key, "history")) self.clipboard_history = eql(u8, value, "true");
     } else if (eql(u8, section, "notifications")) {
@@ -365,6 +408,7 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "flashing")) t.flashing = !eql(u8, value, "false");
         if (eql(u8, key, "show_desktop_corner")) t.show_desktop_corner = !eql(u8, value, "false");
         if (eql(u8, key, "seconds")) t.seconds = eql(u8, value, "true");
+        if (eql(u8, key, "peek")) t.peek = !eql(u8, value, "false");
     }
 }
 
@@ -457,6 +501,13 @@ pub fn save(self: *const Store, io: std.Io) void {
     // The shortcuts, after the rest: one line each.
     ours_writer.print("\n[clipboard]\nhistory={}\n", .{self.clipboard_history}) catch return;
     ours_writer.print("\n[desktop]\nbackground={t}\nslideshow_folder={s}\nslideshow_minutes={d}\nslideshow_shuffle={}\n", .{ self.background, self.slideshowFolder() orelse "", self.slideshow_minutes, self.slideshow_shuffle }) catch return;
+    ours_writer.print("\n[appearance]\ntitle_bar_material={t}\nwindow_material={t}\n", .{ self.look.title_bars, self.look.windows }) catch return;
+    ours_writer.print("\n[taskbar]\npeek={}\n", .{self.taskbar.peek}) catch return;
+    if (self.layouts_len > 0) ours_writer.print("\n[keyboard]\nlayouts={s}\n", .{self.layouts()}) catch return;
+    inline for (.{ .{ "mouse", self.mouse }, .{ "touchpad", self.touchpad } }) |pair| {
+        const t = pair[1];
+        ours_writer.print("\n[" ++ pair[0] ++ "]\nspeed={d}\nscroll={d}\nnatural_scrolling={}\ntap_to_click={}\nleft_handed={}\ndisable_while_typing={}\n", .{ t.speed, t.scroll, t.natural_scrolling, t.tap_to_click, t.left_handed, t.disable_while_typing }) catch return;
+    }
     const f = self.focus;
     ours_writer.print("\n[notifications]\nfocus_hours={}\nfocus_from={d:0>2}:{d:0>2}\nfocus_to={d:0>2}:{d:0>2}\nfocus_fullscreen={}\nfocus_summary={}\n", .{ f.hours, f.from / 60, f.from % 60, f.to / 60, f.to % 60, f.fullscreen, f.summary }) catch return;
     ours_writer.print("\n[shortcuts]\nmic_mute_sound={}\n", .{self.mic_mute_sound}) catch return;

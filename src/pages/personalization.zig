@@ -15,6 +15,8 @@ const Store = @import("../Store.zig");
 
 pub const State = struct {
     background_choice: Kit.Dropdown = .{},
+    title_material_choice: Kit.Dropdown = .{},
+    window_material_choice: Kit.Dropdown = .{},
     interval_choice: Kit.Dropdown = .{},
     mode_choice: Kit.Dropdown = .{},
     search_choice: Kit.Dropdown = .{},
@@ -85,6 +87,7 @@ fn taskbar(app: *Settings, kit: *Kit) void {
     toggleCard(app, kit, "tb/flashing", .alert, "Show flashing on taskbar apps", "An app's button lit when it wants your attention", &t.flashing);
     toggleCard(app, kit, "tb/corner", .desktop, "Select the far corner of the taskbar to show the desktop", "", &t.show_desktop_corner);
     toggleCard(app, kit, "tb/seconds", .clock, "Show seconds in system tray clock", "Uses more power", &t.seconds);
+    toggleCard(app, kit, "tb/peek", .eye, "Use Peek to preview the desktop", "When the pointer rests on the far corner of the taskbar", &t.peek);
 }
 
 /// Which of the system's icons are on the desktop - Windows' Desktop Icon
@@ -131,6 +134,34 @@ fn themes(app: *Settings, kit: *Kit) void {
     lookCard(app, kit, "look/windows", .window, "Rounded window corners", if (ten) "Windows 10's are square" else "The corners of every window", &look.window_corners, ten);
     lookCard(app, kit, "look/floating", .tab_desktop, "Floating panels", if (ten) "Windows 10's sit against the taskbar" else "Start, search, quick settings and notifications float clear of the taskbar; off, they sit against it", &look.floating, ten);
     lookCard(app, kit, "look/transparency", .eye, "Transparency effects", "Windows and surfaces appear translucent", &look.transparency, false);
+
+    // What title bars are made of, and the glass of the apps that ask for
+    // it - Settings among them.
+    const s = &app.personalization_state;
+    const solid = !look.transparency;
+    kit.section("Materials");
+    kit.cardBegin("look/title-bars", .{ .icon = .window, .title = "Title bars", .description = if (solid) "Solid with transparency effects off" else "Solid, or the wallpaper (Mica) or what is behind (acrylic) showing through" });
+    if (!s.title_material_choice.open) s.title_material_choice.selected = switch (look.title_bars) {
+        .mica => 1,
+        .acrylic => 2,
+        else => 0,
+    };
+    if (!solid) if (kit.dropdown("look/title-bars/list", &s.title_material_choice, &.{ "Solid", "Mica", "Acrylic" }, .fixed(160))) {
+        look.title_bars = switch (s.title_material_choice.selected) {
+            1 => .mica,
+            2 => .acrylic,
+            else => .solid,
+        };
+        app.save();
+    };
+    _ = kit.cardEnd(false);
+    kit.cardBegin("look/windows", .{ .icon = .square_multiple, .title = "App backdrop", .description = if (solid) "Solid with transparency effects off" else "For apps that ask for it, like Settings: automatic is Mica in Windows 11's look, acrylic in Windows 10's" });
+    if (!s.window_material_choice.open) s.window_material_choice.selected = @intFromEnum(look.windows);
+    if (!solid) if (kit.dropdown("look/windows/list", &s.window_material_choice, &.{ "Automatic", "Solid", "Mica", "Acrylic" }, .fixed(160))) {
+        look.windows = @enumFromInt(s.window_material_choice.selected);
+        app.save();
+    };
+    _ = kit.cardEnd(false);
 }
 
 fn lookCard(app: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Name, title: []const u8, description: []const u8, value: *bool, disabled: bool) void {
