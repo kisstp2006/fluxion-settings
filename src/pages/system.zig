@@ -292,7 +292,9 @@ fn sound(app: *Settings, kit: *Kit) void {
 fn shortcuts(app: *Settings, kit: *Kit) void {
     const u = kit.ui;
     const p = &kit.theme.palette;
-    kit.label("Select a shortcut, then press the keys to use - with Ctrl, Alt or the Windows key. Backspace removes it; Escape leaves it as it was.", .body, p.text_secondary);
+    var hint = kit.style(.body, p.text_secondary);
+    hint.wrap = .words;
+    u.text("Select a shortcut, then press the keys to use - with Ctrl, Alt or the Windows key - or a mouse's middle or side button. Backspace removes it; Escape leaves it as it was.", hint);
     kit.section("Microphone");
     shortcutCard(app, kit, .mic_mute);
     kit.cardBegin("sc/mic-sound", .{ .icon = .speaker_2, .title = "Play a sound", .description = "As the microphone is muted, and heard again" });
@@ -300,9 +302,10 @@ fn shortcuts(app: *Settings, kit: *Kit) void {
     _ = kit.cardEnd(false);
     kit.section("Sound and media");
     inline for (.{ .volume_up, .volume_down, .volume_mute, .play_pause, .next_track, .previous_track }) |which| shortcutCard(app, kit, which);
+    kit.section("Desktop");
+    inline for (.{ .clipboard, .emoji, .volume_mixer }) |which| shortcutCard(app, kit, which);
     kit.section("Apps");
     inline for (.{ .task_manager, .files, .settings, .terminal }) |which| shortcutCard(app, kit, which);
-    _ = u;
 }
 
 fn shortcutCard(app: *Settings, kit: *Kit, which: Store.Shortcut) void {
@@ -310,7 +313,8 @@ fn shortcutCard(app: *Settings, kit: *Kit, which: Store.Shortcut) void {
     kit.cardBegin(id, .{ .icon = .keyboard, .title = which.title() });
     const recording = app.recording == which;
     const keys = app.store.shortcuts.get(which).get(which);
-    const label = if (recording) "Press the keys…" else if (keys.len == 0) "None" else keys;
+    var text_buffer: [96]u8 = undefined;
+    const label = if (recording) "Press the keys or a mouse button…" else if (keys.len == 0) "None" else Settings.comboText(&text_buffer, keys);
     if (kit.button(kit.print("sc/{t}/keys", .{which}), label, .{ .kind = if (recording) .accent else .standard })) {
         app.recording = if (recording) null else which;
     }

@@ -48,6 +48,9 @@ pub const Content = struct {
     draw: *const fn (context: *anyopaque, window: *Window, kit: *Kit) void,
     /// A key the content wants before a text field does. True when it took it.
     key: ?*const fn (context: *anyopaque, window: *Window, sym: xkb.Keysym) bool = null,
+    /// A pointer button other than the left pressed: the middle, a side
+    /// button - a shortcut being chosen. True when it took it.
+    button: ?*const fn (context: *anyopaque, window: *Window, code: u32) bool = null,
 };
 
 gpa: std.mem.Allocator,
@@ -568,7 +571,12 @@ fn pointerListener(_: *wl.Pointer, event: wl.Pointer.Event, self: *Window) void 
             self.redraw();
         },
         .button => |button| {
-            if (button.button != button_left) return;
+            if (button.button != button_left) {
+                if (button.state == .pressed) if (self.content.button) |hook| {
+                    if (hook(self.content.context, self, button.button)) self.redraw();
+                };
+                return;
+            }
             self.down = button.state == .pressed;
             if (self.down) self.pressed_since_drawn = true;
             self.input_since_drawn = true;

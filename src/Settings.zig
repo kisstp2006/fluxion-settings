@@ -131,6 +131,7 @@ pub fn init(self: *Settings, gpa: std.mem.Allocator, io: std.Io) !void {
         .context = self,
         .draw = draw,
         .key = key,
+        .button = pointerButton,
     });
     self.pictures.init(gpa, io);
     self.window.addWatch(.{ .fd = self.pictures.wake[0], .context = self, .ready = picturesReady });
@@ -306,6 +307,47 @@ fn key(context: *anyopaque, window: *Window, sym: xkb.Keysym) bool {
         return true;
     }
     return false;
+}
+
+/// A mouse's button pressed while a shortcut is being chosen: its middle or
+/// a side button, with whatever modifiers are held - a mouse's side button
+/// alone is a fine key for the microphone.
+fn pointerButton(context: *anyopaque, window: *Window, code: u32) bool {
+    const self: *Settings = @ptrCast(@alignCast(context));
+    const which = self.recording orelse return false;
+    const name: []const u8 = switch (code) {
+        0x112 => "MouseMiddle",
+        0x113, 0x116 => "Mouse4",
+        0x114, 0x115 => "Mouse5",
+        0x117 => "Mouse6",
+        else => return false,
+    };
+    var buffer: [64]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buffer);
+    if (window.modifierHeld("Mod4")) w.writeAll("Super+") catch return false;
+    if (window.modifierHeld("Control")) w.writeAll("Ctrl+") catch return false;
+    if (window.modifierHeld("Mod1")) w.writeAll("Alt+") catch return false;
+    if (window.modifierHeld("Shift")) w.writeAll("Shift+") catch return false;
+    w.writeAll(name) catch return false;
+    self.store.shortcuts.getPtr(which).set(w.buffered());
+    self.recording = null;
+    self.save();
+    return true;
+}
+
+/// A shortcut as a person reads it: "Mouse4" as the back button.
+pub fn comboText(buffer: []u8, combo: []const u8) []const u8 {
+    const names = [_]struct { []const u8, []const u8 }{
+        .{ "MouseMiddle", "Middle mouse button" },
+        .{ "Mouse4", "Mouse back button" },
+        .{ "Mouse5", "Mouse forward button" },
+        .{ "Mouse6", "Mouse button 6" },
+    };
+    for (names) |n| if (std.mem.endsWith(u8, combo, n[0])) {
+        const prefix = combo[0 .. combo.len - n[0].len];
+        return std.fmt.bufPrint(buffer, "{s}{s}", .{ prefix, n[1] }) catch combo;
+    };
+    return combo;
 }
 
 /// A key pressed while a shortcut is being chosen: with its modifiers, the
