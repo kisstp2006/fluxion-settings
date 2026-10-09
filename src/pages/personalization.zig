@@ -136,7 +136,7 @@ fn lookCard(app: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Name,
     var shown = value.* and !disabled;
     if (kit.toggle(kit.print("{s}/toggle", .{id}), if (disabled) &shown else value, .{ .disabled = disabled })) {
         app.save();
-        app.retheme();
+        app.rethemeSoon();
     }
     _ = kit.cardEnd(false);
 }
@@ -185,7 +185,7 @@ fn styleCard(app: *Settings, kit: *Kit, style: Store.Look.Style, title: []const 
     if (u.justReleased() and !chosen) {
         app.store.look.style = style;
         app.save();
-        app.retheme();
+        app.rethemeSoon();
     }
 }
 
@@ -363,7 +363,7 @@ fn colors(app: *Settings, kit: *Kit) void {
     if (kit.dropdown("mode/list", &s.mode_choice, &.{ "Light", "Dark" }, .fixed(160))) {
         app.store.mode = if (s.mode_choice.selected == 0) .light else .dark;
         app.save();
-        app.retheme();
+        app.rethemeSoon();
     }
     _ = kit.cardEnd(false);
 
@@ -389,7 +389,7 @@ fn colors(app: *Settings, kit: *Kit) void {
         if (u.justReleased()) {
             app.store.accent = colour;
             app.save();
-            app.retheme();
+            app.rethemeSoon();
         }
         u.close();
     }

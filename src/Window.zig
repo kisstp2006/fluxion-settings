@@ -129,7 +129,7 @@ repeat_key: ?u32 = null,
 repeat_at_ms: i64 = 0,
 repeat_delay_ms: i32 = 400,
 repeat_rate_ms: i32 = 33,
-watches: [4]Watch = undefined,
+watches: [6]Watch = undefined,
 watch_count: usize = 0,
 /// When to draw again with nothing else happening - a countdown's next
 /// second - or nought.
@@ -262,7 +262,7 @@ pub fn run(self: *Window) !void {
             const until: i32 = @intCast(std.math.clamp(self.wake_at_ms - nowMs(), 0, 1000));
             timeout = if (timeout < 0) until else @min(timeout, until);
         }
-        var fds: [5]posix.pollfd = undefined;
+        var fds: [7]posix.pollfd = undefined;
         fds[0] = .{ .fd = self.display.getFd(), .events = posix.POLL.IN, .revents = 0 };
         for (self.watches[0..self.watch_count], 1..) |w, i| {
             const write = if (w.wants_write) |f| f(w.context) else false;

@@ -117,6 +117,10 @@ displays: ?*Displays = null,
 display_state: display_page.State = .{},
 /// A watch on the file the choices are kept in: the shell writes to it too.
 store_watch: ?std.c.fd_t = null,
+/// Rings a moment after a new look is chosen: this window takes it then,
+/// after the compositor has taken its picture of the screens to cross
+/// over from. See `rethemeSoon`.
+retheme_timer: ?std.c.fd_t = null,
 apps: ?apps_mod.Apps = null,
 
 /// What the pages show, read when they open.
@@ -142,6 +146,11 @@ pub fn init(self: *Settings, gpa: std.mem.Allocator, io: std.Io) !void {
     }
     self.store_watch = Store.watch(io);
     if (self.store_watch) |fd| self.window.addWatch(.{ .fd = fd, .context = self, .ready = storeChanged });
+    const timer = std.os.linux.timerfd_create(.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true });
+    if (std.os.linux.errno(timer) == .SUCCESS) {
+        self.retheme_timer = @intCast(timer);
+        self.window.addWatch(.{ .fd = @intCast(timer), .context = self, .ready = rethemeRang });
+    }
     if (dbus.Connection.open(gpa, .system)) |bus| {
         self.system = bus;
         self.window.addWatch(.{ .fd = bus.fd, .context = self, .ready = systemReady, .wants_write = systemWantsWrite });
@@ -152,6 +161,7 @@ pub fn deinit(self: *Settings) void {
     if (self.displays) |d| d.deinit();
     self.pictures.deinit();
     if (self.store_watch) |fd| _ = std.c.close(fd);
+    if (self.retheme_timer) |fd| _ = std.c.close(fd);
     if (self.apps) |*a| a.deinit();
     if (self.system) |bus| bus.close();
     self.window.deinit();
@@ -267,6 +277,25 @@ pub fn retheme(self: *Settings) void {
     self.window.setTheme(modeOf(self.store.mode), widgets.Accent.from(widgets.argb(self.store.accent)), lookOf(self.store.look));
 }
 
+/// Take the look chosen a moment from now: the compositor crosses the
+/// screens over from a picture of them as they were, which must not have
+/// this window in the new look already. Without a timer, at once.
+pub fn rethemeSoon(self: *Settings) void {
+    const fd = self.retheme_timer orelse return self.retheme();
+    const spec: std.os.linux.itimerspec = .{
+        .it_interval = .{ .sec = 0, .nsec = 0 },
+        .it_value = .{ .sec = 0, .nsec = 120 * std.time.ns_per_ms },
+    };
+    if (std.os.linux.errno(std.os.linux.timerfd_settime(fd, .{}, &spec, null)) != .SUCCESS) self.retheme();
+}
+
+fn rethemeRang(context: *anyopaque) void {
+    const self: *Settings = @ptrCast(@alignCast(context));
+    var expirations: u64 = 0;
+    _ = std.c.read(self.retheme_timer.?, std.mem.asBytes(&expirations), 8);
+    self.retheme();
+}
+
 /// The file changed - written here, or by the shell from quick settings:
 /// what it says now is shown.
 fn storeChanged(context: *anyopaque) void {
@@ -274,7 +303,7 @@ fn storeChanged(context: *anyopaque) void {
     if (!Store.changed(self.store_watch.?)) return;
     const before = self.store;
     self.store = Store.load(self.io);
-    if (before.mode != self.store.mode or before.accent != self.store.accent or !std.meta.eql(before.look, self.store.look)) self.retheme();
+    if (before.mode != self.store.mode or before.accent != self.store.accent or !std.meta.eql(before.look, self.store.look)) self.rethemeSoon();
     self.window.redraw();
 }
 
