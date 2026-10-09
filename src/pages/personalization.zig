@@ -301,8 +301,12 @@ fn preview(kit: *Kit, style: Store.Look.Style) void {
     });
     defer u.close();
     if (eleven) u.empty(.{ .width = .grow });
-    // Start: Windows 11's four blue squares, Windows 10's white flag.
-    u.empty(.{ .width = .fixed(8), .height = .fixed(8), .corner_radius = .all(if (eleven) 1.5 else 0), .keep_corners = true, .background_color = if (eleven) accent.light1 else ink });
+    // Start: the desktop's own mark, three bars of light, in either look.
+    {
+        u.open(.{ .width = .fixed(9), .height = .fixed(8), .direction = .top_to_bottom, .gap = 1, .align_y = .center });
+        defer u.close();
+        for ([_]f32{ 9, 6.5, 4 }) |w| u.empty(.{ .width = .fixed(w), .height = .fixed(2), .corner_radius = .all(1), .keep_corners = true, .background_color = accent.light1 });
+    }
     // Windows 10's search box beside it.
     if (!eleven) u.empty(.{ .width = .fixed(50), .height = .fixed(10), .background_color = if (dark) widgets.argb(0xFF3A3A3A) else widgets.argb(0xFFFFFFFF), .border = .{ .color = ink.withAlpha(0.2), .width = .all(1) } });
     for (0..5) |i| {
