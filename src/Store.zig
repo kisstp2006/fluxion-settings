@@ -106,6 +106,10 @@ pub const Shortcut = enum {
     volume_mixer,
     clipboard,
     emoji,
+    run,
+    quick_settings,
+    notification_center,
+    project,
 
     pub fn default(self: Shortcut) []const u8 {
         return switch (self) {
@@ -113,6 +117,10 @@ pub const Shortcut = enum {
             .volume_mixer => "Super+Ctrl+V",
             .clipboard => "Super+V",
             .emoji => "Super+period",
+            .run => "Super+R",
+            .quick_settings => "Super+A",
+            .notification_center => "Super+N",
+            .project => "Super+P",
             .task_manager => "Ctrl+Shift+Escape",
             .files => "Super+E",
             .settings => "Super+I",
@@ -137,6 +145,10 @@ pub const Shortcut = enum {
             .volume_mixer => "Volume mixer",
             .clipboard => "Clipboard history",
             .emoji => "Emoji and symbols",
+            .run => "Run",
+            .quick_settings => "Quick settings, or the Action Center",
+            .notification_center => "Notifications and calendar",
+            .project => "Project to a second screen",
         };
     }
 };

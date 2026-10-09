@@ -303,7 +303,7 @@ fn shortcuts(app: *Settings, kit: *Kit) void {
     kit.section("Sound and media");
     inline for (.{ .volume_up, .volume_down, .volume_mute, .play_pause, .next_track, .previous_track }) |which| shortcutCard(app, kit, which);
     kit.section("Desktop");
-    inline for (.{ .clipboard, .emoji, .volume_mixer }) |which| shortcutCard(app, kit, which);
+    inline for (.{ .run, .quick_settings, .notification_center, .project, .clipboard, .emoji, .volume_mixer }) |which| shortcutCard(app, kit, which);
     kit.section("Apps");
     inline for (.{ .task_manager, .files, .settings, .terminal }) |which| shortcutCard(app, kit, which);
 }
