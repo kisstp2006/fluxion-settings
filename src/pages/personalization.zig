@@ -22,6 +22,7 @@ pub const State = struct {
     search_choice: Kit.Dropdown = .{},
     alignment_choice: Kit.Dropdown = .{},
     position_choice: Kit.Dropdown = .{},
+    combine_choice: Kit.Dropdown = .{},
 };
 
 const search_names = [_][]const u8{ "Hide", "Search icon only" };
@@ -88,6 +89,13 @@ fn taskbar(app: *Settings, kit: *Kit) void {
     toggleCard(app, kit, "tb/corner", .desktop, "Select the far corner of the taskbar to show the desktop", "", &t.show_desktop_corner);
     toggleCard(app, kit, "tb/seconds", .clock, "Show seconds in system tray clock", "Uses more power", &t.seconds);
     toggleCard(app, kit, "tb/peek", .eye, "Use Peek to preview the desktop", "When the pointer rests on the far corner of the taskbar", &t.peek);
+    kit.cardBegin("tb/combine", .{ .icon = .tab_desktop, .title = "Combine taskbar buttons and hide labels", .description = "An app's windows under one button, or each its own with its title" });
+    if (!s.combine_choice.open) s.combine_choice.selected = @intFromEnum(t.combine);
+    if (kit.dropdown("tb/combine/list", &s.combine_choice, &.{ "Always", "When taskbar is full", "Never" }, .fixed(200))) {
+        t.combine = @enumFromInt(s.combine_choice.selected);
+        app.save();
+    }
+    _ = kit.cardEnd(false);
 }
 
 /// Which of the system's icons are on the desktop - Windows' Desktop Icon

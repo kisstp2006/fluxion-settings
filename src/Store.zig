@@ -235,6 +235,11 @@ pub const Taskbar = struct {
     seconds: bool = false,
     /// Aero Peek on the far corner.
     peek: bool = true,
+    /// An app's windows under one button, labels hidden - always, when the
+    /// taskbar is full, or never.
+    combine: Combine = .always,
+
+    pub const Combine = enum { always, when_full, never };
 
     pub const Alignment = enum { center, left };
     pub const Position = enum { bottom, top, left, right };
@@ -409,6 +414,7 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "show_desktop_corner")) t.show_desktop_corner = !eql(u8, value, "false");
         if (eql(u8, key, "seconds")) t.seconds = eql(u8, value, "true");
         if (eql(u8, key, "peek")) t.peek = !eql(u8, value, "false");
+        if (eql(u8, key, "combine")) t.combine = std.meta.stringToEnum(Taskbar.Combine, value) orelse t.combine;
     }
 }
 
@@ -502,7 +508,7 @@ pub fn save(self: *const Store, io: std.Io) void {
     ours_writer.print("\n[clipboard]\nhistory={}\n", .{self.clipboard_history}) catch return;
     ours_writer.print("\n[desktop]\nbackground={t}\nslideshow_folder={s}\nslideshow_minutes={d}\nslideshow_shuffle={}\n", .{ self.background, self.slideshowFolder() orelse "", self.slideshow_minutes, self.slideshow_shuffle }) catch return;
     ours_writer.print("\n[appearance]\ntitle_bar_material={t}\nwindow_material={t}\n", .{ self.look.title_bars, self.look.windows }) catch return;
-    ours_writer.print("\n[taskbar]\npeek={}\n", .{self.taskbar.peek}) catch return;
+    ours_writer.print("\n[taskbar]\npeek={}\ncombine={t}\n", .{ self.taskbar.peek, self.taskbar.combine }) catch return;
     if (self.layouts_len > 0) ours_writer.print("\n[keyboard]\nlayouts={s}\n", .{self.layouts()}) catch return;
     inline for (.{ .{ "mouse", self.mouse }, .{ "touchpad", self.touchpad } }) |pair| {
         const t = pair[1];
