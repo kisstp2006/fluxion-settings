@@ -247,7 +247,7 @@ pub const Taskbar = struct {
     seconds: bool = false,
     /// Aero Peek on the far corner.
     peek: bool = true,
-    /// Windows 11's "Open search on hover".
+    /// Windows 11's recent searches over the search button.
     search_hover: bool = true,
     /// An app's windows under one button, labels hidden - always, when the
     /// taskbar is full, or never.
