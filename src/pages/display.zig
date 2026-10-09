@@ -194,7 +194,7 @@ fn arrangement(app: *Settings, kit: *Kit, d: *Displays) void {
             .corner_radius = .all(4),
             .background_color = if (chosen) p.accent else if (hovered) p.control_secondary else p.control,
             .border = .{ .color = if (chosen) p.accent else p.control_stroke, .width = .all(if (chosen) 2 else 1) },
-            .floating = .{ .attach = .parent, .offset = .{ .x = x + 2, .y = y + 2 } },
+            .floating = .{ .attach = .parent, .offset = .{ .x = x + 2, .y = y + 2 }, .clip = .like_children },
         });
         kit.label(kit.print("{d}", .{number}), .title, if (chosen) p.text_on_accent else p.text_primary);
         if (u.justReleased()) s.chosen.set(h.name.get());

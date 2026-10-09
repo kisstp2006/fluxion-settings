@@ -150,18 +150,10 @@ fn themes(app: *Settings, kit: *Kit) void {
     const s = &app.personalization_state;
     const solid = !look.transparency;
     kit.section("Materials");
-    kit.cardBegin("look/title-bars", .{ .icon = .window, .title = "Title bars", .description = if (solid) "Solid with transparency effects off" else "Solid, or the wallpaper (Mica) or what is behind (acrylic) showing through" });
-    if (!s.title_material_choice.open) s.title_material_choice.selected = switch (look.title_bars) {
-        .mica => 1,
-        .acrylic => 2,
-        else => 0,
-    };
-    if (!solid) if (kit.dropdown("look/title-bars/list", &s.title_material_choice, &.{ "Solid", "Mica", "Acrylic" }, .fixed(160))) {
-        look.title_bars = switch (s.title_material_choice.selected) {
-            1 => .mica,
-            2 => .acrylic,
-            else => .solid,
-        };
+    kit.cardBegin("look/title-bars", .{ .icon = .window, .title = "Title bars", .description = if (solid) "Solid with transparency effects off" else "The title bars the desktop draws - automatic follows an app's own backdrop. Apps that draw their own, like most GNOME apps, keep theirs" });
+    if (!s.title_material_choice.open) s.title_material_choice.selected = @intFromEnum(look.title_bars);
+    if (!solid) if (kit.dropdown("look/title-bars/list", &s.title_material_choice, &.{ "Automatic", "Solid", "Mica", "Acrylic" }, .fixed(160))) {
+        look.title_bars = @enumFromInt(s.title_material_choice.selected);
         app.save();
     };
     _ = kit.cardEnd(false);
@@ -267,7 +259,7 @@ fn preview(kit: *Kit, style: Store.Look.Style) void {
         .keep_corners = true,
         .background_color = base,
         .border = .{ .color = if (eleven) ink.withAlpha(0.12) else accent.base, .width = .all(1) },
-        .floating = .{ .offset = .{ .x = if (eleven) 70 else 120, .y = 14 } },
+        .floating = .{ .offset = .{ .x = if (eleven) 70 else 120, .y = 14 }, .clip = .like_children },
     });
     {
         // Its title bar and the close button: Windows 10's red square.
@@ -302,9 +294,9 @@ fn preview(kit: *Kit, style: Store.Look.Style) void {
         .border = if (eleven) .{ .color = ink.withAlpha(0.1), .width = .all(1) } else null,
         .shadow = if (eleven) .{ .color = widgets.argb(0x50000000), .blur = 10, .offset = .{ .x = 0, .y = 3 } } else null,
         .floating = if (eleven)
-            .{ .fractions = .{ .element_x = 0.5, .element_y = 1, .target_x = 0.5, .target_y = 1 }, .offset = .{ .x = 0, .y = -22 }, .z_index = 1 }
+            .{ .fractions = .{ .element_x = 0.5, .element_y = 1, .target_x = 0.5, .target_y = 1 }, .offset = .{ .x = 0, .y = -22 }, .z_index = 1, .clip = .like_children }
         else
-            .{ .fractions = .{ .element_x = 0, .element_y = 1, .target_x = 0, .target_y = 1 }, .offset = .{ .x = 0, .y = -14 }, .z_index = 1 },
+            .{ .fractions = .{ .element_x = 0, .element_y = 1, .target_x = 0, .target_y = 1 }, .offset = .{ .x = 0, .y = -14 }, .z_index = 1, .clip = .like_children },
     });
     if (eleven) {
         // A search field, and a grid of pinned apps.
@@ -341,7 +333,7 @@ fn preview(kit: *Kit, style: Store.Look.Style) void {
         .align_y = .center,
         .padding = .xy(4, 0),
         .background_color = bar,
-        .floating = .{ .fractions = .{ .element_x = 0, .element_y = 1, .target_x = 0, .target_y = 1 }, .z_index = 2 },
+        .floating = .{ .fractions = .{ .element_x = 0, .element_y = 1, .target_x = 0, .target_y = 1 }, .z_index = 2, .clip = .like_children },
     });
     defer u.close();
     if (eleven) u.empty(.{ .width = .grow });

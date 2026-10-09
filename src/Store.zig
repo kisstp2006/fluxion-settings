@@ -140,7 +140,7 @@ pub const Look = struct {
     /// Windows, menus and panels move.
     animations: bool = true,
     /// What title bars are made of, and the glass of apps that ask for it.
-    title_bars: Material = .solid,
+    title_bars: Material = .auto,
     windows: Material = .auto,
 
     pub const Material = enum { auto, solid, mica, acrylic };
