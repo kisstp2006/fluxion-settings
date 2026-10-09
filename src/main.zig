@@ -36,5 +36,6 @@ test {
     _ = @import("Store.zig");
     _ = @import("ImageFile.zig");
     _ = @import("pages/system.zig");
+    _ = @import("Displays.zig");
     _ = @import("apps.zig");
 }

@@ -17,6 +17,8 @@ const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const xdg = wayland.client.xdg;
 const zxdg = wayland.client.zxdg;
+const wp = wayland.client.wp;
+const zwlr = wayland.client.zwlr;
 const xkb = @import("xkbcommon");
 
 const ui = @import("fluxion_ui");
@@ -56,6 +58,10 @@ shm: ?*wl.Shm = null,
 wm_base: ?*xdg.WmBase = null,
 decorations: ?*zxdg.DecorationManagerV1 = null,
 seat: ?*wl.Seat = null,
+fractional_manager: ?*wp.FractionalScaleManagerV1 = null,
+viewporter: ?*wp.Viewporter = null,
+/// The screens, for Display: where the compositor tells of them.
+output_manager: ?*zwlr.OutputManagerV1 = null,
 pointer: ?*wl.Pointer = null,
 keyboard: ?*wl.Keyboard = null,
 
@@ -63,6 +69,14 @@ surface: *wl.Surface = undefined,
 xdg_surface: *xdg.Surface = undefined,
 toplevel: *xdg.Toplevel = undefined,
 decoration: ?*zxdg.ToplevelDecorationV1 = null,
+/// How many of the screen's pixels each of the window's is - 1.5 at 150 %:
+/// drawn that much bigger, every length in the drawing with it, and shown
+/// at its size, so it is sharp at any scale. The content works in the
+/// window's own pixels throughout: `width`, `boxOf`.
+scale: f32 = 1,
+fractional: ?*wp.FractionalScaleV1 = null,
+viewport: ?*wp.Viewport = null,
+shown_size: [2]u32 = .{ 0, 0 },
 
 content: Content,
 theme: widgets.Theme,
@@ -103,6 +117,9 @@ repeat_delay_ms: i32 = 400,
 repeat_rate_ms: i32 = 33,
 watches: [4]Watch = undefined,
 watch_count: usize = 0,
+/// When to draw again with nothing else happening - a countdown's next
+/// second - or nought.
+wake_at_ms: i64 = 0,
 
 const button_left = 0x110;
 
@@ -145,6 +162,13 @@ pub fn init(self: *Window, gpa: std.mem.Allocator, io: std.Io, title: [:0]const 
     self.toplevel.setTitle(title);
     self.toplevel.setAppId(app_id);
     self.toplevel.setMinSize(560, 420);
+    if (self.fractional_manager) |manager| if (self.viewporter) |viewporter| {
+        self.viewport = viewporter.getViewport(self.surface) catch null;
+        if (self.viewport != null) {
+            self.fractional = manager.getFractionalScale(self.surface) catch null;
+            if (self.fractional) |f| f.setListener(*Window, fractionalListener, self);
+        }
+    };
     // The compositor's title bar, where it draws one.
     if (self.decorations) |manager| {
         self.decoration = manager.getToplevelDecoration(self.toplevel) catch null;
@@ -157,6 +181,8 @@ pub fn deinit(self: *Window) void {
     if (self.frame_callback) |c| c.destroy();
     for (self.buffers) |maybe| if (maybe) |b| b.destroy(self.gpa);
     if (self.decoration) |d| d.destroy();
+    if (self.fractional) |f| f.destroy();
+    if (self.viewport) |v| v.destroy();
     self.toplevel.destroy();
     self.xdg_surface.destroy();
     self.surface.destroy();
@@ -192,6 +218,10 @@ pub fn run(self: *Window) !void {
         _ = self.display.flush();
         var timeout: i32 = if (self.layout.wantsKeyboard()) 500 else -1;
         if (self.repeat_key != null) timeout = @intCast(std.math.clamp(self.repeat_at_ms - nowMs(), 0, 1000));
+        if (self.wake_at_ms != 0) {
+            const until: i32 = @intCast(std.math.clamp(self.wake_at_ms - nowMs(), 0, 1000));
+            timeout = if (timeout < 0) until else @min(timeout, until);
+        }
         var fds: [5]posix.pollfd = undefined;
         fds[0] = .{ .fd = self.display.getFd(), .events = posix.POLL.IN, .revents = 0 };
         for (self.watches[0..self.watch_count], 1..) |w, i| {
@@ -212,9 +242,18 @@ pub fn run(self: *Window) !void {
                 self.typeKey(code);
             };
             if (self.layout.wantsKeyboard()) self.redraw();
+            if (self.wake_at_ms != 0 and nowMs() >= self.wake_at_ms) {
+                self.wake_at_ms = 0;
+                self.redraw();
+            }
         }
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
     }
+}
+
+/// Draw again at `ms`, though nothing else happens by then.
+pub fn wakeAt(self: *Window, ms: i64) void {
+    if (self.wake_at_ms == 0 or ms < self.wake_at_ms) self.wake_at_ms = ms;
 }
 
 /// Something changed: draw again at the next chance.
@@ -237,6 +276,12 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Win
                 self.wm_base.?.setListener(*Window, wmBaseListener, self);
             } else if (std.mem.eql(u8, name, std.mem.span(zxdg.DecorationManagerV1.interface.name))) {
                 self.decorations = registry.bind(global.name, zxdg.DecorationManagerV1, 1) catch return;
+            } else if (std.mem.eql(u8, name, std.mem.span(wp.FractionalScaleManagerV1.interface.name))) {
+                self.fractional_manager = registry.bind(global.name, wp.FractionalScaleManagerV1, 1) catch return;
+            } else if (std.mem.eql(u8, name, std.mem.span(zwlr.OutputManagerV1.interface.name))) {
+                self.output_manager = registry.bind(global.name, zwlr.OutputManagerV1, @min(global.version, 4)) catch return;
+            } else if (std.mem.eql(u8, name, std.mem.span(wp.Viewporter.interface.name))) {
+                self.viewporter = registry.bind(global.name, wp.Viewporter, 1) catch return;
             } else if (std.mem.eql(u8, name, std.mem.span(wl.Seat.interface.name))) {
                 if (self.seat != null) return;
                 self.seat = registry.bind(global.name, wl.Seat, 7) catch return;
@@ -245,6 +290,35 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Win
         },
         .global_remove => {},
     }
+}
+
+fn fractionalListener(_: *wp.FractionalScaleV1, event: wp.FractionalScaleV1.Event, self: *Window) void {
+    switch (event) {
+        .preferred_scale => |e| {
+            // In 120ths: 180 is 150 %.
+            const scale = @as(f32, @floatFromInt(e.scale)) / 120;
+            if (scale == self.scale) return;
+            self.scale = scale;
+            self.icons.scale = scale;
+            self.redraw();
+        },
+    }
+}
+
+/// Its size in the screen's pixels: what it is drawn at.
+fn pixelSize(self: *const Window) [2]u32 {
+    return .{
+        @intFromFloat(@round(@as(f32, @floatFromInt(self.width)) * self.scale)),
+        @intFromFloat(@round(@as(f32, @floatFromInt(self.height)) * self.scale)),
+    };
+}
+
+/// Where the element `id` is, in the window's pixels, as the last drawing
+/// put it.
+pub fn boxOf(self: *Window, id: []const u8) ?ui.BoundingBox {
+    const b = self.layout.boxOf(id) orelse return null;
+    const s = self.scale;
+    return .{ .x = b.x / s, .y = b.y / s, .width = b.width / s, .height = b.height / s };
 }
 
 fn wmBaseListener(wm_base: *xdg.WmBase, event: xdg.WmBase.Event, _: *Window) void {
@@ -287,17 +361,18 @@ fn toplevelListener(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Window) 
 
 fn freeBuffer(self: *Window) ?*ShmBuffer {
     const shm = self.shm orelse return null;
+    const pw, const ph = self.pixelSize();
     for (0..self.buffers.len) |i| {
         const index = (self.next_buffer + i) % self.buffers.len;
         const slot = &self.buffers[index];
         self.next_buffer = (index + 1) % self.buffers.len;
         if (slot.*) |buffer| {
             if (buffer.busy) continue;
-            if (buffer.width == self.width and buffer.height == self.height) return buffer;
+            if (buffer.width == pw and buffer.height == ph) return buffer;
             buffer.destroy(self.gpa);
             slot.* = null;
         }
-        slot.* = ShmBuffer.create(self.gpa, shm, self.width, self.height) catch |err| {
+        slot.* = ShmBuffer.create(self.gpa, shm, pw, ph) catch |err| {
             log.err("could not allocate a buffer: {t}", .{err});
             return null;
         };
@@ -320,15 +395,16 @@ fn render(self: *Window) void {
 
     var kit: Kit = .init(&self.layout, &self.theme);
     var commands: []const ui.RenderCommand = &.{};
+    const s = self.scale;
     // Twice: hover and press are answered from the drawing before.
     for (0..2) |pass| {
         const down = self.down or (pass == 0 and self.pressed_since_drawn);
         if (self.pointer_at) |p| {
-            self.layout.setPointer(p[0], p[1], down);
+            self.layout.setPointer(p[0] * s, p[1] * s, down);
         } else {
             self.layout.setPointer(-1000, -1000, false);
         }
-        self.layout.begin(.init(@floatFromInt(self.width), @floatFromInt(self.height)));
+        self.layout.begin(.{ .size = .init(@floatFromInt(buffer.width), @floatFromInt(buffer.height)), .scale = s });
         kit.frame();
         self.content.draw(self.content.context, self, &kit);
         commands = self.layout.end() catch |err| {
@@ -345,6 +421,10 @@ fn render(self: *Window) void {
         log.err("could not draw: {t}", .{err});
     };
     self.surface.attach(buffer.wl_buffer, 0, 0);
+    if (self.viewport) |viewport| if (self.shown_size[0] != self.width or self.shown_size[1] != self.height) {
+        viewport.setDestination(@intCast(self.width), @intCast(self.height));
+        self.shown_size = .{ self.width, self.height };
+    };
     self.surface.damageBuffer(0, 0, @intCast(buffer.width), @intCast(buffer.height));
     if (self.surface.frame()) |callback| {
         callback.setListener(*Window, frameListener, self);
@@ -370,7 +450,7 @@ fn scrollStep(self: *Window) void {
     if (self.scroll_pending == 0) return;
     var step = self.scroll_pending * 0.35;
     if (@abs(self.scroll_pending) < 2) step = self.scroll_pending;
-    if (!self.layout.scrollHovered(0, step)) {
+    if (!self.layout.scrollHovered(0, step * self.scale)) {
         self.scroll_pending = 0;
         return;
     }
@@ -427,7 +507,7 @@ fn pointerListener(_: *wl.Pointer, event: wl.Pointer.Event, self: *Window) void 
             if (self.axis_wheel) {
                 self.scroll_pending += dy * 3;
             } else {
-                _ = self.layout.scrollHovered(0, dy);
+                _ = self.layout.scrollHovered(0, dy * self.scale);
             }
             self.redraw();
         },

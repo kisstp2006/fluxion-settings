@@ -34,8 +34,10 @@ const Store = @import("Store.zig");
 const Motion = @import("Motion.zig");
 const Pictures = @import("Pictures.zig");
 const apps_mod = @import("apps.zig");
+const Displays = @import("Displays.zig");
 
 const system_page = @import("pages/system.zig");
+const display_page = @import("pages/display.zig");
 const personalization = @import("pages/personalization.zig");
 const apps_page = @import("pages/apps.zig");
 const devices = @import("pages/devices.zig");
@@ -53,6 +55,7 @@ pub const Page = enum { system, devices, network, personalization, apps, account
 pub const Sub = enum {
     none,
     display,
+    advanced_display,
     sound,
     notifications,
     power,
@@ -68,7 +71,12 @@ pub const Sub = enum {
     language,
 };
 
-const nav_width = 300;
+const nav_width = 320;
+/// Folded to its icons: as wide as one of them, with the pane's margins.
+const nav_compact = 64;
+/// Narrower than this, the pane folds to its icons by itself, as Windows'
+/// does, and opens again as the window widens.
+const narrow_width = 900;
 
 gpa: std.mem.Allocator,
 io: std.Io,
@@ -79,11 +87,32 @@ sub: Sub = .none,
 /// The system bus: the brightness, the power mode, Bluetooth, the network.
 system: ?*dbus.Connection = null,
 pictures: Pictures = undefined,
-/// A page coming in, as Windows 11's Settings brings one: up into place,
-/// and clear.
-page_motion: Motion = .{ .duration = 333, .ease = .decelerate },
+/// A page coming in, as WinUI brings one: another area up from below into
+/// place; a page inside one grown into place from a little smaller, as if
+/// gone into; and back out, settled from a little larger.
+page_motion: Motion = .{ .duration = 300, .ease = .popup },
+page_transition: enum { entrance, drill_in, drill_out } = .entrance,
 /// The shortcut whose keys are being chosen: the next keys pressed.
 recording: ?Store.Shortcut = null,
+/// The navigation pane open, or folded to its icons - by its button, or the
+/// window being narrow - and the motion of it folding or opening.
+nav_open: bool = true,
+nav_was_narrow: bool = false,
+nav_motion: Motion = .{ .duration = 250, .ease = .point_to_point },
+nav_from: f32 = nav_width,
+nav_to: f32 = nav_width,
+/// The pill by the chosen area, moving to another: from where it was to
+/// where it goes, in the window's pixels, as WinUI's does - stretched
+/// toward the new area first, its far end then drawn in after it.
+pill_page: ?Page = null,
+pill_from: f32 = 0,
+pill_to: f32 = 0,
+pill_motion: Motion = .{ .duration = 450, .ease = .decelerate },
+/// What Enter opens in the search: the first finding listed.
+search_first: ?struct { page: Page, sub: Sub } = null,
+/// The screens, where the compositor tells of them.
+displays: ?*Displays = null,
+display_state: display_page.State = .{},
 /// A watch on the file the choices are kept in: the shell writes to it too.
 store_watch: ?std.c.fd_t = null,
 apps: ?apps_mod.Apps = null,
@@ -104,6 +133,10 @@ pub fn init(self: *Settings, gpa: std.mem.Allocator, io: std.Io) !void {
     });
     self.pictures.init(gpa, io);
     self.window.addWatch(.{ .fd = self.pictures.wake[0], .context = self, .ready = picturesReady });
+    if (self.window.output_manager) |manager| {
+        self.displays = Displays.init(gpa, manager) catch null;
+        if (self.displays) |d| d.changed = .{ .context = self, .call = displaysChanged };
+    }
     self.store_watch = Store.watch(io);
     if (self.store_watch) |fd| self.window.addWatch(.{ .fd = fd, .context = self, .ready = storeChanged });
     if (dbus.Connection.open(gpa, .system)) |bus| {
@@ -113,6 +146,7 @@ pub fn init(self: *Settings, gpa: std.mem.Allocator, io: std.Io) !void {
 }
 
 pub fn deinit(self: *Settings) void {
+    if (self.displays) |d| d.deinit();
     self.pictures.deinit();
     if (self.store_watch) |fd| _ = std.c.close(fd);
     if (self.apps) |*a| a.deinit();
@@ -155,8 +189,26 @@ pub fn openAt(self: *Settings, link: []const u8) void {
     for (targets) |t| if (std.mem.eql(u8, t.name, name)) return self.go(t.page, t.sub);
 }
 
-/// Go to a page, or one inside it.
+fn displaysChanged(context: *anyopaque) void {
+    const self: *Settings = @ptrCast(@alignCast(context));
+    display_page.displaysChanged(self);
+    self.window.redraw();
+}
+
+/// Go to a page, or one inside it - where it is already, nowhere: the page
+/// does not come in again.
 pub fn go(self: *Settings, page: Page, sub: Sub) void {
+    if (self.page == page and self.sub == sub) return;
+    // Another area, or into a page of this one, or back out of it.
+    const deeper = page == self.page and depth(sub) > depth(self.sub);
+    self.page_transition = if (page != self.page) .entrance else if (deeper) .drill_in else .drill_out;
+    self.page_motion = switch (self.page_transition) {
+        // WinUI's: up 140 pixels over 300 ms; grown from 94 % over 783;
+        // settled from 106 % over 333.
+        .entrance => .{ .duration = 300, .ease = .popup },
+        .drill_in => .{ .duration = 783, .ease = .popup },
+        .drill_out => .{ .duration = 333, .ease = .decelerate },
+    };
     self.page = page;
     self.sub = sub;
     self.window.layout.scrollTo("content/scroll", 0, 0);
@@ -165,10 +217,19 @@ pub fn go(self: *Settings, page: Page, sub: Sub) void {
     self.window.redraw();
 }
 
+/// How far in a page is: an area's own, a page of it, a page of that.
+fn depth(sub: Sub) u8 {
+    return switch (sub) {
+        .none => 0,
+        .advanced_display => 2,
+        else => 1,
+    };
+}
+
 /// A page opened: what it shows read again.
 fn opened(self: *Settings) void {
     switch (self.page) {
-        .system => system_page.opened(self),
+        .system => if (self.sub == .display or self.sub == .advanced_display) display_page.opened(self) else system_page.opened(self),
         .devices => devices.opened(self),
         .network => network.opened(self),
         .personalization => if (self.sub == .background) self.pictures.start(),
@@ -226,9 +287,20 @@ fn key(context: *anyopaque, window: *Window, sym: xkb.Keysym) bool {
         self.recordKey(window, which, sym);
         return true;
     }
+    if (display_page.key(self, sym)) return true;
+    // Enter in the search: what it found.
+    const K = xkb.Keysym;
+    if ((@intFromEnum(sym) == K.Return or @intFromEnum(sym) == K.KP_Enter) and window.layout.isFocused("search")) {
+        if (self.search_first) |f| self.openFound(f.page, f.sub);
+        return true;
+    }
+    if (@intFromEnum(sym) == K.Escape and window.layout.isFocused("search") and (window.layout.textValueOf("search") orelse @as([]const u8, "")).len > 0) {
+        window.layout.setTextValue("search", "");
+        return true;
+    }
     // Back, out of a page inside an area: Alt+Left, or Escape.
     if (@intFromEnum(sym) == xkb.Keysym.Escape and self.sub != .none) {
-        self.go(self.page, .none);
+        self.go(self.page, if (self.sub == .advanced_display) .display else .none);
         return true;
     }
     return false;
@@ -299,28 +371,46 @@ pub fn areaTitle(page: Page) []const u8 {
 
 fn draw(context: *anyopaque, window: *Window, kit: *Kit) void {
     const self: *Settings = @ptrCast(@alignCast(context));
-    _ = window;
     const u = kit.ui;
     const p = &kit.theme.palette;
+    // Narrowed past the line, the pane folds; widened, it opens again.
+    const narrow = window.width < narrow_width;
+    if (narrow != self.nav_was_narrow) {
+        self.nav_was_narrow = narrow;
+        self.setNavOpen(!narrow);
+    }
     u.open(.{ .width = .grow, .height = .grow, .background_color = widgets.material.tint(kit.theme.mode) });
     defer u.close();
+    // Over everything: the question whether to keep the screens' new mode.
+    defer display_page.keepDialog(self, kit);
     self.navigation(kit);
     kit.layerBegin("content", .{});
     defer u.close();
+    // The title stays where it is; the cards scroll under it.
+    {
+        u.open(.{ .width = .grow, .padding = .trbl(24, 36, 0, 36) });
+        defer u.close();
+        self.header(kit);
+    }
     u.open(.{ .id = "content/scroll", .width = .grow, .height = .grow, .direction = .top_to_bottom, .clip = .scrollY });
     defer u.close();
     const t = self.page_motion.progress();
     if (self.page_motion.running()) self.window.redraw();
+    const shown: struct { y: f32, scale: f32, opacity: f32 } = switch (self.page_transition) {
+        .entrance => .{ .y = Motion.mix(140, 0, t), .scale = 1, .opacity = self.page_motion.fade(0, 100) },
+        .drill_in => .{ .y = 0, .scale = Motion.mix(0.94, 1, t), .opacity = Motion.curve(.decelerate, @min(1, self.page_motion.fade(0, 333))) },
+        .drill_out => .{ .y = 0, .scale = Motion.mix(1.06, 1, t), .opacity = self.page_motion.fade(0, 333) },
+    };
     u.open(.{
         .width = .grow,
         .direction = .top_to_bottom,
-        .padding = .trbl(24, 36, 36, 36),
+        .padding = .trbl(0, 36, 36, 36),
         .gap = 4,
-        .translate = .{ .x = 0, .y = Motion.mix(28, 0, t) },
-        .opacity = self.page_motion.fade(0, 167),
+        .translate = .{ .x = 0, .y = shown.y },
+        .scale = if (shown.scale != 1) .by(shown.scale) else null,
+        .opacity = shown.opacity,
     });
     defer u.close();
-    self.header(kit);
     switch (self.page) {
         .system => system_page.draw(self, kit),
         .devices => devices.draw(self, kit),
@@ -338,7 +428,7 @@ fn draw(context: *anyopaque, window: *Window, kit: *Kit) void {
 fn header(self: *Settings, kit: *Kit) void {
     const u = kit.ui;
     const p = &kit.theme.palette;
-    u.open(.{ .gap = 12, .align_y = .center, .padding = .trbl(0, 0, 16, 0) });
+    u.open(.{ .gap = 12, .align_y = .center, .padding = .trbl(0, 0, 20, 0) });
     defer u.close();
     const area = areaTitle(self.page);
     if (self.sub == .none) {
@@ -352,6 +442,16 @@ fn header(self: *Settings, kit: *Kit) void {
     if (u.justReleased()) self.go(self.page, .none);
     u.close();
     kit.icon(.chevron_right, 16, p.text_secondary, .regular);
+    // Inside Display: Display a way back too.
+    if (self.sub == .advanced_display) {
+        const display_id = "header/display";
+        const over = u.isPointerOver(display_id);
+        u.open(.{ .id = display_id });
+        kit.label(subTitle(.display), .title, if (over) p.text_primary else p.text_secondary);
+        if (u.justReleased()) self.go(self.page, .display);
+        u.close();
+        kit.icon(.chevron_right, 16, p.text_secondary, .regular);
+    }
     kit.label(subTitle(self.sub), .title, p.text_primary);
 }
 
@@ -359,6 +459,7 @@ pub fn subTitle(sub: Sub) []const u8 {
     return switch (sub) {
         .none => "",
         .display => "Display",
+        .advanced_display => "Advanced display",
         .sound => "Sound",
         .notifications => "Notifications",
         .power => "Power",
@@ -375,38 +476,179 @@ pub fn subTitle(sub: Sub) []const u8 {
     };
 }
 
+/// Open the pane to its names, or fold it to its icons - as it is now,
+/// from wherever it is on its way.
+fn setNavOpen(self: *Settings, open: bool) void {
+    if (open == self.nav_open) return;
+    self.nav_from = self.navWidth();
+    self.nav_to = if (open) nav_width else nav_compact;
+    self.nav_open = open;
+    self.nav_motion.begin();
+    self.window.redraw();
+}
+
+fn px(v: f32) u16 {
+    return @intFromFloat(@round(@max(0, v)));
+}
+
+/// How wide the pane is drawn now.
+fn navWidth(self: *Settings) f32 {
+    if (self.nav_motion.running()) self.window.redraw();
+    return Motion.mix(self.nav_from, self.nav_to, self.nav_motion.progress());
+}
+
 fn navigation(self: *Settings, kit: *Kit) void {
     const u = kit.ui;
     const p = &kit.theme.palette;
-    u.open(.{ .width = .fixed(nav_width), .height = .grow, .direction = .top_to_bottom, .padding = .all(8), .gap = 4 });
+    const width = self.navWidth();
+    // How open it is: what fades the names in and out.
+    const open = std.math.clamp((width - nav_compact) / (nav_width - nav_compact), 0, 1);
+    u.open(.{ .id = "nav", .width = .fixed(width), .height = .grow, .direction = .top_to_bottom, .padding = .all(8), .gap = 4, .clip = .both });
     defer u.close();
-    // Who is signed in: a click goes to their info.
+    // The button that folds it and opens it.
+    {
+        const id = "nav/toggle";
+        const hovered = u.isPointerOver(id);
+        u.open(.{
+            .id = id,
+            .width = .fixed(48),
+            .height = .fixed(36),
+            .align_x = .center,
+            .align_y = .center,
+            .corner_radius = .all(4),
+            .background_color = if (u.isElementPressed(id)) p.subtle_tertiary else if (hovered) p.subtle_secondary else .transparent,
+        });
+        kit.icon(.navigation, 16, p.text_primary, .regular);
+        if (u.justReleased()) self.setNavOpen(!self.nav_open);
+        u.close();
+    }
+    // Who is signed in: a click goes to their info. Folded, the picture.
     {
         const id = "nav/person";
-        u.open(.{ .id = id, .width = .grow, .gap = 16, .align_y = .center, .padding = .trbl(12, 8, 16, 8), .corner_radius = .all(4), .background_color = if (u.isPointerOver(id)) p.subtle_secondary else .transparent });
+        const picture = Motion.mix(32, 64, open);
+        u.open(.{
+            .id = id,
+            .width = .grow,
+            .gap = 16,
+            .align_y = .center,
+            .padding = .trbl(px(Motion.mix(4, 12, open)), px(Motion.mix(0, 8, open)), px(Motion.mix(4, 16, open)), 8),
+            .corner_radius = .all(4),
+            .background_color = if (u.isPointerOver(id)) p.subtle_secondary else .transparent,
+        });
         defer u.close();
         const person = accounts.person();
         {
-            u.open(.{ .width = .fixed(60), .height = .fixed(60), .corner_radius = .all(30), .background_color = p.accent, .align_x = .center, .align_y = .center });
+            u.open(.{ .width = .fixed(picture), .height = .fixed(picture), .corner_radius = .all(picture / 2), .background_color = p.accent, .align_x = .center, .align_y = .center });
             defer u.close();
-            kit.label(person.initials(), .subtitle, p.text_on_accent);
+            kit.label(person.initials(), if (open > 0.5) .subtitle else .body_strong, p.text_on_accent);
         }
-        u.open(.{ .direction = .top_to_bottom });
-        kit.label(person.display(), .body_strong, p.text_primary);
-        kit.label("Local account", .caption, p.text_secondary);
-        u.close();
+        if (open > 0.02) {
+            u.open(.{ .direction = .top_to_bottom, .opacity = open });
+            var strong = kit.style(.body_strong, p.text_primary);
+            strong.wrap = .none;
+            u.text(person.display(), strong);
+            var small = kit.style(.caption, p.text_secondary);
+            small.wrap = .none;
+            u.text("Local account", small);
+            u.close();
+        }
         if (u.justReleased()) self.go(.accounts, .info);
     }
-    {
-        u.open(.{ .width = .grow, .padding = .trbl(0, 4, 8, 4) });
+    // The search: folded, its icon, which opens the pane to it.
+    if (open > 0.5) {
+        u.open(.{ .width = .grow, .padding = .trbl(0, 4, 8, 4), .opacity = std.math.clamp(open * 2 - 1, 0, 1) });
         defer u.close();
         kit.textField("search", .{ .placeholder = "Find a setting", .width = .grow, .icon = .search });
+    } else {
+        if (self.navRow(kit, "nav/search", .search, "Find a setting", false, open)) {
+            self.setNavOpen(true);
+            u.setFocus("search");
+        }
     }
-    const query = u.textValueOf("search") orelse "";
-    if (query.len > 0) return self.searchResults(kit, query);
     for (areas) |a| {
-        if (kit.navItem(kit.print("nav/{t}", .{a.page}), a.icon, a.title, self.page == a.page)) self.go(a.page, .none);
+        if (self.navRow(kit, kit.print("nav/{t}", .{a.page}), a.icon, a.title, self.page == a.page, open)) self.go(a.page, .none);
     }
+    self.pill(kit);
+    // What a search finds, under the box, the areas left where they are.
+    const query = u.textValueOf("search") orelse "";
+    if (query.len > 0 and open > 0.5) self.searchResults(kit, query);
+}
+
+/// An area in the pane: its icon, and its name while the pane is open
+/// enough to show it. True on the frame it is clicked.
+fn navRow(self: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Name, title: []const u8, selected: bool, open: f32) bool {
+    _ = self;
+    const u = kit.ui;
+    const p = &kit.theme.palette;
+    const hovered = u.isPointerOver(id);
+    const pressed = u.isElementPressed(id);
+    const fill = if (selected)
+        (if (hovered) p.subtle_tertiary else p.subtle_secondary)
+    else if (pressed) p.subtle_tertiary else if (hovered) p.subtle_secondary else ui.Color.transparent;
+    u.open(.{
+        .id = id,
+        .width = .grow,
+        .height = .fixed(kit.theme.metrics.nav_item_height),
+        .padding = .trbl(0, 8, 0, 16),
+        .gap = 16,
+        .align_y = .center,
+        .background_color = fill,
+        .corner_radius = .all(kit.theme.metrics.control_radius),
+    });
+    kit.icon(icon, 16, p.text_primary, if (selected) .filled else .regular);
+    if (open > 0.02) {
+        u.open(.{ .opacity = open });
+        var style = kit.style(.body, p.text_primary);
+        style.wrap = .none;
+        u.text(title, style);
+        u.close();
+    }
+    const clicked = u.justReleased();
+    u.close();
+    return clicked;
+}
+
+/// The pill by the chosen area. Moved to another, it stretches toward it -
+/// its leading end first - and its trailing end follows, so for a moment
+/// it spans both, as WinUI's navigation does.
+fn pill(self: *Settings, kit: *Kit) void {
+    const p = &kit.theme.palette;
+    const pill_h: f32 = 16;
+    const row = self.window.boxOf(kit.print("nav/{t}", .{self.page})) orelse return;
+    const target = row.y + (row.height - pill_h) / 2;
+    if (self.pill_page != self.page) {
+        // Somewhere to come from: where it is shown now.
+        self.pill_from = if (self.pill_page == null) target else self.pillShown()[0];
+        self.pill_to = target;
+        self.pill_page = self.page;
+        self.pill_motion.begin();
+    } else {
+        // The rows moved - the pane folding: it goes with them.
+        self.pill_to = target;
+        if (!self.pill_motion.running()) self.pill_from = target;
+    }
+    if (self.pill_motion.running()) self.window.redraw();
+    const top, const bottom = self.pillShown();
+    kit.ui.empty(.{
+        .width = .fixed(3),
+        .height = .fixed(@max(pill_h, bottom - top)),
+        .corner_radius = .all(1.5),
+        .background_color = p.accent,
+        .floating = .{ .attach = .root, .offset = .{ .x = row.x, .y = top }, .z_index = 5 },
+        .passthrough = true,
+    });
+}
+
+/// The pill's top and bottom as drawn now.
+fn pillShown(self: *const Settings) [2]f32 {
+    const pill_h: f32 = 16;
+    const t = self.pill_motion.elapsed();
+    const lead = Motion.curve(.decelerate, std.math.clamp(t / 0.55, 0, 1));
+    const trail = Motion.curve(.decelerate, std.math.clamp((t - 0.3) / 0.7, 0, 1));
+    const lead_y = Motion.mix(self.pill_from, self.pill_to, lead);
+    const trail_y = Motion.mix(self.pill_from, self.pill_to, trail);
+    if (self.pill_to >= self.pill_from) return .{ trail_y, lead_y + pill_h };
+    return .{ lead_y, trail_y + pill_h };
 }
 
 /// What a search finds: the pages whose names or words match, the way to
@@ -414,7 +656,8 @@ fn navigation(self: *Settings, kit: *Kit) void {
 fn searchResults(self: *Settings, kit: *Kit, query: []const u8) void {
     const Hit = struct { page: Page, sub: Sub, title: []const u8, words: []const u8 };
     const hits = [_]Hit{
-        .{ .page = .system, .sub = .display, .title = "Display", .words = "brightness night light screen monitor resolution scale kijelző fényerő" },
+        .{ .page = .system, .sub = .display, .title = "Display", .words = "brightness night light screen monitor resolution scale orientation rotate dpi size kijelző fényerő skálázás felbontás" },
+        .{ .page = .system, .sub = .advanced_display, .title = "Advanced display", .words = "refresh rate hz display information monitor frissítési" },
         .{ .page = .system, .sub = .sound, .title = "Sound", .words = "volume speakers output audio mute hang hangerő" },
         .{ .page = .system, .sub = .notifications, .title = "Notifications", .words = "do not disturb toasts alerts értesítések" },
         .{ .page = .system, .sub = .power, .title = "Power", .words = "screen off sleep battery energy mode performance energia" },
@@ -432,21 +675,46 @@ fn searchResults(self: *Settings, kit: *Kit, query: []const u8) void {
         .{ .page = .time, .sub = .language, .title = "Language & region", .words = "language keyboard layout region locale nyelv billentyűzet" },
     };
     const p = &kit.theme.palette;
+    const u = kit.ui;
+    u.open(.{
+        .id = "search/suggestions",
+        .width = .fixed(nav_width - 24),
+        .direction = .top_to_bottom,
+        .padding = .all(4),
+        .gap = 2,
+        .background_color = p.flyout,
+        .corner_radius = .all(8),
+        .border = .{ .color = p.surface_stroke_flyout, .width = .all(1) },
+        .shadow = kit.elevation(.flyout),
+        .floating = .{ .attach = .id, .to = "search/frame", .anchor = .below, .offset = .{ .x = 0, .y = 4 }, .z_index = 50 },
+    });
+    defer u.close();
     var any = false;
+    self.search_first = null;
     for (hits, 0..) |h, i| {
         const matches = std.ascii.indexOfIgnoreCase(h.title, query) != null or std.ascii.indexOfIgnoreCase(h.words, query) != null;
         if (!matches) continue;
         any = true;
-        if (kit.navItem(kit.print("hit/{d}", .{i}), null, h.title, false)) {
-            self.window.layout.setTextValue("search", "");
-            self.go(h.page, h.sub);
-        }
+        if (self.search_first == null) self.search_first = .{ .page = h.page, .sub = h.sub };
+        if (kit.navItem(kit.print("hit/{d}", .{i}), iconOf(h.page), h.title, false)) self.openFound(h.page, h.sub);
     }
     if (!any) {
-        kit.ui.open(.{ .padding = .all(12) });
+        u.open(.{ .padding = .all(12) });
         kit.label("No results", .body, p.text_secondary);
-        kit.ui.close();
+        u.close();
     }
+}
+
+fn iconOf(page: Page) widgets.icons.Name {
+    for (areas) |a| if (a.page == page) return a.icon;
+    return .settings;
+}
+
+/// A search's finding opened: the box emptied, the page shown.
+fn openFound(self: *Settings, page: Page, sub: Sub) void {
+    self.window.layout.setTextValue("search", "");
+    self.search_first = null;
+    self.go(page, sub);
 }
 
 // -------------------------------------------------------------------------

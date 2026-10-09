@@ -13,7 +13,18 @@ pub fn build(b: *std.Build) void {
     const scanner = Scanner.create(b, .{});
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
     scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
+    // Drawn sharp at any scale: told the screen's, and shown at the
+    // window's size whatever the size drawn.
+    scanner.addSystemProtocol("staging/fractional-scale/fractional-scale-v1.xml");
+    scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
+    // The screens - their modes, scale and turn - as Display shows and sets
+    // them. Not in wayland-protocols: wlroots' own, kept here.
+    scanner.addCustomProtocol(b.path("protocol/wlr-output-management-unstable-v1.xml"));
     scanner.generate("wl_compositor", 4);
+    scanner.generate("wl_output", 4);
+    scanner.generate("wp_fractional_scale_manager_v1", 1);
+    scanner.generate("wp_viewporter", 1);
+    scanner.generate("zwlr_output_manager_v1", 4);
     scanner.generate("wl_shm", 1);
     scanner.generate("wl_seat", 7);
     scanner.generate("xdg_wm_base", 3);

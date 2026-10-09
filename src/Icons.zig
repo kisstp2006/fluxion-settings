@@ -29,6 +29,10 @@ io: std.Io,
 /// What a texture number means, in the order the icons were loaded. Never
 /// reordered, so a number handed out stays good.
 images: std.ArrayList(raster.Image) = .empty,
+/// How many screen pixels each of the window's is: an icon asked for at 24
+/// is read at 36 for 150 %, and drawn into its 24 - which the drawing makes
+/// 36 - without being stretched.
+scale: f32 = 1,
 
 /// What was found for each name at each size, found or not, so a missing
 /// icon is looked for once.
@@ -110,8 +114,9 @@ pub fn systemThemeName(arena: std.mem.Allocator, io: std.Io) []const u8 {
 
 /// The texture number of `name` at `size` pixels, or null when the theme
 /// has no such icon. A full path is read as it is.
-pub fn lookup(self: *Icons, name: []const u8, size: u32) ?u32 {
+pub fn lookup(self: *Icons, name: []const u8, logical_size: u32) ?u32 {
     if (name.len == 0) return null;
+    const size = self.screenPixels(logical_size);
     var key_buffer: [512]u8 = undefined;
     const key = std.fmt.bufPrint(&key_buffer, "{s}@{d}", .{ name, size }) catch return null;
     if (self.cache.get(key)) |found| return found;
@@ -124,20 +129,26 @@ pub fn lookup(self: *Icons, name: []const u8, size: u32) ?u32 {
 
 /// An icon from a folder of an app's own - a tray icon's `IconThemePath` -
 /// before the theme's.
-pub fn lookupIn(self: *Icons, dir: []const u8, name: []const u8, size: u32) ?u32 {
-    if (dir.len == 0 or name.len == 0) return self.lookup(name, size);
+pub fn lookupIn(self: *Icons, dir: []const u8, name: []const u8, logical_size: u32) ?u32 {
+    if (dir.len == 0 or name.len == 0) return self.lookup(name, logical_size);
+    const size = self.screenPixels(logical_size);
     var key_buffer: [1024]u8 = undefined;
-    const key = std.fmt.bufPrint(&key_buffer, "{s}/{s}@{d}", .{ dir, name, size }) catch return self.lookup(name, size);
-    if (self.cache.get(key)) |found| return found orelse self.lookup(name, size);
+    const key = std.fmt.bufPrint(&key_buffer, "{s}/{s}@{d}", .{ dir, name, size }) catch return self.lookup(name, logical_size);
+    if (self.cache.get(key)) |found| return found orelse self.lookup(name, logical_size);
     const found: ?u32 = for ([_][]const u8{ ".png", ".svg" }) |ext| {
         if (std.mem.eql(u8, ext, ".svg") and self.svg == null) continue;
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
         const path = std.fmt.bufPrintZ(&buffer, "{s}/{s}{s}", .{ dir, name, ext }) catch continue;
         if (std.c.access(path.ptr, std.c.F_OK) == 0) break self.load(path, size);
     } else null;
-    const owned = self.arena.allocator().dupe(u8, key) catch return found orelse self.lookup(name, size);
+    const owned = self.arena.allocator().dupe(u8, key) catch return found orelse self.lookup(name, logical_size);
     self.cache.put(self.gpa, owned, found) catch {};
-    return found orelse self.lookup(name, size);
+    return found orelse self.lookup(name, logical_size);
+}
+
+/// `size` in the window's pixels, in the screen's.
+fn screenPixels(self: *const Icons, size: u32) u32 {
+    return @intFromFloat(@round(@as(f32, @floatFromInt(size)) * self.scale));
 }
 
 /// Keep a picture the shell made itself - a tray icon's pixels - as an

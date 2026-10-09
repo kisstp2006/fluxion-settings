@@ -358,6 +358,28 @@ pub fn save(self: *const Store, io: std.Io) void {
     };
 }
 
+/// Set `key` in `section` to `value` in the file, and nothing else: what a
+/// screen was set to, under its own `[output NAME]`.
+pub fn writeKey(io: std.Io, section: []const u8, key: []const u8, value: []const u8) void {
+    var path_buffer: [512]u8 = undefined;
+    const file = path(&path_buffer) orelse return;
+    var read_buffer: [16384]u8 = undefined;
+    var out_buffer: [16384]u8 = undefined;
+    const text: []const u8 = std.Io.Dir.cwd().readFile(io, file, &read_buffer) catch "";
+    const new = rewrite(&out_buffer, text, section, key, value) catch return;
+    const dir = std.fs.path.dirname(file) orelse return;
+    std.Io.Dir.cwd().createDirPath(io, dir) catch {};
+    var temp_buffer: [520]u8 = undefined;
+    const temp = std.fmt.bufPrint(&temp_buffer, "{s}.new", .{file}) catch return;
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = temp, .data = new }) catch |err| {
+        log.err("could not write {s}: {t}", .{ temp, err });
+        return;
+    };
+    std.Io.Dir.rename(std.Io.Dir.cwd(), temp, std.Io.Dir.cwd(), file, io) catch |err| {
+        log.err("could not put {s} in place: {t}", .{ file, err });
+    };
+}
+
 /// `text` with `key` in `section` set to `value`: changed where it is,
 /// added at the end of its section, or the section added with it - the
 /// rest as it was.

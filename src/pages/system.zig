@@ -12,6 +12,7 @@ const Kit = widgets.Kit;
 
 const Settings = @import("../Settings.zig");
 const Store = @import("../Store.zig");
+const display_page = @import("display.zig");
 
 const log = std.log.scoped(.system);
 
@@ -106,7 +107,8 @@ pub fn opened(app: *Settings) void {
 
 pub fn draw(app: *Settings, kit: *Kit) void {
     switch (app.sub) {
-        .display => display(app, kit),
+        .display => display_page.draw(app, kit),
+        .advanced_display => display_page.advanced(app, kit),
         .sound => sound(app, kit),
         .notifications => notifications(app, kit),
         .power => power(app, kit),
@@ -117,9 +119,9 @@ pub fn draw(app: *Settings, kit: *Kit) void {
 }
 
 fn overview(app: *Settings, kit: *Kit) void {
-    app.linkCard(kit, .display, .desktop, "Brightness, night light");
-    app.linkCard(kit, .sound, .speaker_2, "Volume, output device");
-    app.linkCard(kit, .notifications, .alert, "Alerts from apps and the system, do not disturb");
+    app.linkCard(kit, .display, .desktop, "Monitors, brightness, night light, scale");
+    app.linkCard(kit, .sound, .speaker_2, "Volume levels, output, input, sound devices");
+    app.linkCard(kit, .notifications, .alert, "Alerts from apps and system, do not disturb");
     app.linkCard(kit, .power, .power, "Screen off, power mode");
     app.linkCard(kit, .shortcuts, .keyboard, "Keys for the microphone, the sound, and apps");
     app.linkCard(kit, .about, .info, "Device specifications, the system");
@@ -129,7 +131,8 @@ fn overview(app: *Settings, kit: *Kit) void {
 // Display
 // -------------------------------------------------------------------------
 
-fn display(app: *Settings, kit: *Kit) void {
+/// Brightness & color: the top of Display.
+pub fn brightnessAndColor(app: *Settings, kit: *Kit) void {
     const s = &app.system_state;
     kit.section("Brightness & color");
     kit.cardBegin("brightness", .{ .icon = .brightness_high, .title = "Brightness", .description = if (s.backlight == null) "Change the brightness on the display itself" else "Adjust the brightness of the built-in display" });
