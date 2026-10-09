@@ -452,28 +452,34 @@ fn colors(app: *Settings, kit: *Kit) void {
 
     kit.cardBegin("accent", .{ .icon = .color, .title = "Accent color", .description = "Used for buttons, switches and selections" });
     _ = kit.cardEnd(false);
-    u.open(.{ .width = .grow, .wrap = true, .gap = 8, .wrap_gap = 8, .padding = .trbl(8, 16, 16, 16) });
-    defer u.close();
-    for (accents, 0..) |colour, i| {
-        const id = kit.print("accent/{d}", .{i});
-        const chosen = colour == app.store.accent;
-        const hovered = u.isPointerOver(id);
-        u.open(.{
-            .id = id,
-            .width = .fixed(40),
-            .height = .fixed(40),
-            .corner_radius = .all(6),
-            .background_color = widgets.argb(colour),
-            .border = if (chosen) .{ .color = p.text_primary, .width = .all(3) } else if (hovered) .{ .color = p.text_secondary, .width = .all(1) } else null,
-            .align_x = .center,
-            .align_y = .center,
-        });
-        if (chosen) kit.icon(.checkmark, 16, widgets.argb(0xFFFFFFFF), .filled);
-        if (u.justReleased()) {
-            app.store.accent = colour;
-            app.save();
-            app.rethemeSoon();
+    {
+        u.open(.{ .width = .grow, .wrap = true, .gap = 8, .wrap_gap = 8, .padding = .trbl(8, 16, 16, 16) });
+        defer u.close();
+        for (accents, 0..) |colour, i| {
+            const id = kit.print("accent/{d}", .{i});
+            const chosen = colour == app.store.accent;
+            const hovered = u.isPointerOver(id);
+            u.open(.{
+                .id = id,
+                .width = .fixed(40),
+                .height = .fixed(40),
+                .corner_radius = .all(6),
+                .background_color = widgets.argb(colour),
+                .border = if (chosen) .{ .color = p.text_primary, .width = .all(3) } else if (hovered) .{ .color = p.text_secondary, .width = .all(1) } else null,
+                .align_x = .center,
+                .align_y = .center,
+            });
+            if (chosen) kit.icon(.checkmark, 16, widgets.argb(0xFFFFFFFF), .filled);
+            if (u.justReleased()) {
+                app.store.accent = colour;
+                app.save();
+                app.rethemeSoon();
+            }
+            u.close();
         }
-        u.close();
     }
+    // Both Windows offer it, off at first.
+    kit.cardBegin("accent/title-bars", .{ .icon = .window, .title = "Show accent color on title bars and window borders", .description = "The window in front's, where the desktop draws them" });
+    if (kit.toggle("accent/title-bars/toggle", &app.store.look.accent_title_bars, .{})) app.save();
+    _ = kit.cardEnd(false);
 }

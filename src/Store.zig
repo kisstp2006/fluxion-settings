@@ -139,6 +139,8 @@ pub const Look = struct {
     transparency: bool = true,
     /// Windows, menus and panels move.
     animations: bool = true,
+    /// The window in front's title bar and border in the accent.
+    accent_title_bars: bool = false,
     /// What title bars are made of, and the glass of apps that ask for it.
     title_bars: Material = .auto,
     windows: Material = .auto,
@@ -370,6 +372,7 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "style")) l.style = std.meta.stringToEnum(Look.Style, value) orelse l.style;
         if (eql(u8, key, "rounded_corners")) l.rounded_corners = !eql(u8, value, "false");
         if (eql(u8, key, "window_corners")) l.window_corners = !eql(u8, value, "false");
+        if (eql(u8, key, "accent_title_bars")) l.accent_title_bars = eql(u8, value, "true");
         if (eql(u8, key, "floating")) l.floating = !eql(u8, value, "false");
         if (eql(u8, key, "transparency")) l.transparency = !eql(u8, value, "false");
         if (eql(u8, key, "animations")) l.animations = !eql(u8, value, "false");
@@ -529,7 +532,7 @@ pub fn save(self: *const Store, io: std.Io) void {
     // The shortcuts, after the rest: one line each.
     ours_writer.print("\n[clipboard]\nhistory={}\n", .{self.clipboard_history}) catch return;
     ours_writer.print("\n[desktop]\nbackground={t}\nslideshow_folder={s}\nslideshow_minutes={d}\nslideshow_shuffle={}\n", .{ self.background, self.slideshowFolder() orelse "", self.slideshow_minutes, self.slideshow_shuffle }) catch return;
-    ours_writer.print("\n[appearance]\ntitle_bar_material={t}\nwindow_material={t}\nanimations={}\n", .{ self.look.title_bars, self.look.windows, self.look.animations }) catch return;
+    ours_writer.print("\n[appearance]\ntitle_bar_material={t}\nwindow_material={t}\nanimations={}\naccent_title_bars={}\n", .{ self.look.title_bars, self.look.windows, self.look.animations, self.look.accent_title_bars }) catch return;
     ours_writer.print("\n[taskbar]\npeek={}\ncombine={t}\nsearch_hover={}\n", .{ self.taskbar.peek, self.taskbar.combine, self.taskbar.search_hover }) catch return;
     const g = self.storage;
     ours_writer.print("\n[storage]\nsense={}\nevery_days={d}\ntrash_days={d}\nrun={d}\n", .{ g.sense, g.every_days, g.trash_days, g.run }) catch return;
