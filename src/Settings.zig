@@ -466,7 +466,9 @@ fn draw(context: *anyopaque, window: *Window, kit: *Kit) void {
         self.nav_was_narrow = narrow;
         self.setNavOpen(!narrow);
     }
-    u.open(.{ .width = .grow, .height = .grow, .background_color = widgets.material.tint(kit.theme.mode) });
+    // Mica's tint over the blur behind; with none - Windows 10's look, or
+    // transparency off - the window's own solid colour.
+    u.open(.{ .width = .grow, .height = .grow, .background_color = if (window.mica) widgets.material.tint(kit.theme.mode) else p.solid_base });
     defer u.close();
     // Over everything: the question whether to keep the screens' new mode.
     defer display_page.keepDialog(self, kit);
@@ -507,7 +509,6 @@ fn draw(context: *anyopaque, window: *Window, kit: *Kit) void {
         .accounts => accounts.draw(self, kit),
         .time => time_page.draw(self, kit),
     }
-    _ = p;
 }
 
 /// The page's title, as a breadcrumb: the area, and the page inside it -
@@ -671,7 +672,9 @@ fn navRow(self: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Name, 
     const p = &kit.theme.palette;
     const hovered = u.isPointerOver(id);
     const pressed = u.isElementPressed(id);
-    const fill = if (selected)
+    // Windows 10 marks the area it is in with the bar alone.
+    const ten = kit.theme.look.style == .win10;
+    const fill = if (selected and !ten)
         (if (hovered) p.subtle_tertiary else p.subtle_secondary)
     else if (pressed) p.subtle_tertiary else if (hovered) p.subtle_secondary else ui.Color.transparent;
     u.open(.{
@@ -702,12 +705,13 @@ fn navRow(self: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Name, 
 /// it spans both, as WinUI's navigation does.
 fn pill(self: *Settings, kit: *Kit) void {
     const p = &kit.theme.palette;
-    const pill_h: f32 = 16;
+    // Windows 11's short pill, or Windows 10's taller square bar.
+    const pill_h: f32 = kit.theme.metrics.pill_height;
     const row = self.window.boxOf(kit.print("nav/{t}", .{self.page})) orelse return;
     const target = row.y + (row.height - pill_h) / 2;
     if (self.pill_page != self.page) {
         // Somewhere to come from: where it is shown now.
-        self.pill_from = if (self.pill_page == null) target else self.pillShown()[0];
+        self.pill_from = if (self.pill_page == null) target else self.pillShown(pill_h)[0];
         self.pill_to = target;
         self.pill_page = self.page;
         self.pill_motion.begin();
@@ -717,9 +721,9 @@ fn pill(self: *Settings, kit: *Kit) void {
         if (!self.pill_motion.running()) self.pill_from = target;
     }
     if (self.pill_motion.running()) self.window.redraw();
-    const top, const bottom = self.pillShown();
+    const top, const bottom = self.pillShown(pill_h);
     kit.ui.empty(.{
-        .width = .fixed(3),
+        .width = .fixed(kit.theme.metrics.pill_width),
         .height = .fixed(@max(pill_h, bottom - top)),
         .corner_radius = .all(1.5),
         .background_color = p.accent,
@@ -729,8 +733,7 @@ fn pill(self: *Settings, kit: *Kit) void {
 }
 
 /// The pill's top and bottom as drawn now.
-fn pillShown(self: *const Settings) [2]f32 {
-    const pill_h: f32 = 16;
+fn pillShown(self: *const Settings, pill_h: f32) [2]f32 {
     const t = self.pill_motion.elapsed();
     const lead = Motion.curve(.decelerate, std.math.clamp(t / 0.55, 0, 1));
     const trail = Motion.curve(.decelerate, std.math.clamp((t - 0.3) / 0.7, 0, 1));
