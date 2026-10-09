@@ -79,10 +79,12 @@ pub const Shortcut = enum {
     files,
     settings,
     terminal,
+    volume_mixer,
 
     pub fn default(self: Shortcut) []const u8 {
         return switch (self) {
             .mic_mute => "Super+Alt+K",
+            .volume_mixer => "Super+Ctrl+V",
             .task_manager => "Ctrl+Shift+Escape",
             .files => "Super+E",
             .settings => "Super+I",
@@ -104,6 +106,7 @@ pub const Shortcut = enum {
             .files => "File Explorer",
             .settings => "Settings",
             .terminal => "Terminal",
+            .volume_mixer => "Volume mixer",
         };
     }
 };
