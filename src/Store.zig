@@ -173,6 +173,8 @@ pub const Taskbar = struct {
     badges: bool = true,
     flashing: bool = true,
     show_desktop_corner: bool = true,
+    /// The clock with its seconds.
+    seconds: bool = false,
 
     pub const Alignment = enum { center, left };
     pub const Position = enum { bottom, top, left, right };
@@ -302,6 +304,7 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "badges")) t.badges = !eql(u8, value, "false");
         if (eql(u8, key, "flashing")) t.flashing = !eql(u8, value, "false");
         if (eql(u8, key, "show_desktop_corner")) t.show_desktop_corner = !eql(u8, value, "false");
+        if (eql(u8, key, "seconds")) t.seconds = eql(u8, value, "true");
     }
 }
 
@@ -350,6 +353,7 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\badges={}
         \\flashing={}
         \\show_desktop_corner={}
+        \\seconds={}
         \\
     , .{
         self.mode,                        self.accent & 0xFFFFFF,
@@ -363,7 +367,7 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         self.taskbar.position,            self.taskbar.alignment,
         self.taskbar.search,              self.taskbar.task_view,
         self.taskbar.badges,              self.taskbar.flashing,
-        self.taskbar.show_desktop_corner,
+        self.taskbar.show_desktop_corner, self.taskbar.seconds,
     });
 }
 

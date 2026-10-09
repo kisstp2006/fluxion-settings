@@ -82,6 +82,7 @@ fn taskbar(app: *Settings, kit: *Kit) void {
     toggleCard(app, kit, "tb/badges", .alert_badge, "Show badges on taskbar apps", "Counts of what is new, on an app's button", &t.badges);
     toggleCard(app, kit, "tb/flashing", .alert, "Show flashing on taskbar apps", "An app's button lit when it wants your attention", &t.flashing);
     toggleCard(app, kit, "tb/corner", .desktop, "Select the far corner of the taskbar to show the desktop", "", &t.show_desktop_corner);
+    toggleCard(app, kit, "tb/seconds", .clock, "Show seconds in system tray clock", "Uses more power", &t.seconds);
 }
 
 /// Which of the system's icons are on the desktop - Windows' Desktop Icon
