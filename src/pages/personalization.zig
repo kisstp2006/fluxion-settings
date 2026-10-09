@@ -67,6 +67,7 @@ fn taskbar(app: *Settings, kit: *Kit) void {
         app.save();
     }
     _ = kit.cardEnd(false);
+    if (t.search != .hide) toggleCard(app, kit, "tb/search-hover", .search, "Open search on hover (when available)", "Search opens when the pointer rests on its button", &t.search_hover);
     toggleCard(app, kit, "tb/taskview", .square_multiple, "Task view", "Your windows and desktops, at a glance", &t.task_view);
 
     kit.section("Taskbar behaviors");
