@@ -14,6 +14,8 @@ const Pictures = @import("../Pictures.zig");
 const Store = @import("../Store.zig");
 
 pub const State = struct {
+    background_choice: Kit.Dropdown = .{},
+    interval_choice: Kit.Dropdown = .{},
     mode_choice: Kit.Dropdown = .{},
     search_choice: Kit.Dropdown = .{},
     alignment_choice: Kit.Dropdown = .{},
@@ -325,10 +327,53 @@ fn preview(kit: *Kit, style: Store.Look.Style) void {
     _ = p;
 }
 
+const interval_names = [_][]const u8{ "1 minute", "10 minutes", "30 minutes", "1 hour", "6 hours", "1 day" };
+const interval_minutes = [_]u32{ 1, 10, 30, 60, 360, 1440 };
+
 fn background(app: *Settings, kit: *Kit) void {
+    const s = &app.personalization_state;
+    const store = &app.store;
+    // A picture, or a slideshow - as Windows' "Personalize your background".
+    kit.cardBegin("bg/kind", .{ .icon = .image, .title = "Personalize your background", .description = "A picture, or a slideshow of a folder's pictures" });
+    if (!s.background_choice.open) s.background_choice.selected = @intFromEnum(store.background);
+    if (kit.dropdown("bg/kind/list", &s.background_choice, &.{ "Picture", "Slideshow" }, .fixed(160))) {
+        store.background = @enumFromInt(s.background_choice.selected);
+        app.save();
+    }
+    _ = kit.cardEnd(false);
+    if (store.background == .slideshow) return slideshow(app, kit);
+
+    kit.cardBegin("bg/browse", .{ .icon = .folder_open, .title = "Choose a photo", .description = store.wallpaper() orelse "Any picture of yours" });
+    if (kit.button("bg/browse/button", "Browse photos", .{})) app.choose(.picture, "Choose a picture");
+    _ = kit.cardEnd(false);
+    pictureGrid(app, kit);
+}
+
+/// A slideshow: its folder, how often it changes, and in what order.
+fn slideshow(app: *Settings, kit: *Kit) void {
+    const s = &app.personalization_state;
+    const store = &app.store;
+    kit.cardBegin("bg/album", .{ .icon = .image_multiple, .title = "Choose a picture album for your slideshow", .description = store.slideshowFolder() orelse "Pictures" });
+    if (kit.button("bg/album/button", "Browse", .{})) app.choose(.folder, "Choose a folder of pictures");
+    _ = kit.cardEnd(false);
+    kit.cardBegin("bg/interval", .{ .icon = .timer, .title = "Change picture every" });
+    if (!s.interval_choice.open) s.interval_choice.selected = for (interval_minutes, 0..) |m, i| {
+        if (m >= store.slideshow_minutes) break i;
+    } else interval_minutes.len - 1;
+    if (kit.dropdown("bg/interval/list", &s.interval_choice, &interval_names, .fixed(160))) {
+        store.slideshow_minutes = interval_minutes[s.interval_choice.selected];
+        app.save();
+    }
+    _ = kit.cardEnd(false);
+    kit.cardBegin("bg/shuffle", .{ .icon = .arrow_sync, .title = "Shuffle the picture order" });
+    if (kit.toggle("bg/shuffle/toggle", &store.slideshow_shuffle, .{})) app.save();
+    _ = kit.cardEnd(false);
+}
+
+fn pictureGrid(app: *Settings, kit: *Kit) void {
     const u = kit.ui;
     const p = &kit.theme.palette;
-    kit.section("Choose a photo");
+    kit.section("Recent images");
     const list = app.pictures.list;
     if (list.len == 0) {
         kit.label("No pictures found under /usr/share/backgrounds or Pictures/Wallpapers.", .body, p.text_secondary);

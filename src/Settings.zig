@@ -31,6 +31,7 @@ const Kit = widgets.Kit;
 
 const Window = @import("Window.zig");
 const Store = @import("Store.zig");
+const Portal = @import("Portal.zig");
 const Motion = @import("Motion.zig");
 const Pictures = @import("Pictures.zig");
 const apps_mod = @import("apps.zig");
@@ -88,6 +89,9 @@ page: Page = .system,
 sub: Sub = .none,
 /// The system bus: the brightness, the power mode, Bluetooth, the network.
 system: ?*dbus.Connection = null,
+/// The file chooser, on the session bus: a picture, a folder.
+portal: Portal = undefined,
+portal_watched: bool = false,
 pictures: Pictures = undefined,
 /// A page coming in, as WinUI brings one: another area up from below into
 /// place; a page inside one grown into place from a little smaller, as if
@@ -132,6 +136,7 @@ personalization_state: personalization.State = .{},
 pub fn init(self: *Settings, gpa: std.mem.Allocator, io: std.Io) !void {
     const store = Store.load(io);
     self.* = .{ .gpa = gpa, .io = io, .store = store };
+    self.portal = .{ .gpa = gpa };
     try self.window.init(gpa, io, "Settings", "org.fluxion.Settings", modeOf(store.mode), widgets.Accent.from(widgets.argb(store.accent)), lookOf(store.look), .{
         .context = self,
         .draw = draw,
@@ -164,6 +169,7 @@ pub fn deinit(self: *Settings) void {
     if (self.retheme_timer) |fd| _ = std.c.close(fd);
     if (self.apps) |*a| a.deinit();
     if (self.system) |bus| bus.close();
+    self.portal.deinit();
     self.window.deinit();
 }
 
@@ -310,6 +316,45 @@ fn storeChanged(context: *anyopaque) void {
 fn picturesReady(context: *anyopaque) void {
     const self: *Settings = @ptrCast(@alignCast(context));
     if (self.pictures.collect(&self.window.icons)) self.window.redraw();
+}
+
+/// The file chooser, asked for a picture or a folder; `chose` hears of it.
+pub fn choose(self: *Settings, want: Portal.Want, title: []const u8) void {
+    const bus = self.portal.connect() orelse return;
+    if (!self.portal_watched) {
+        self.portal_watched = true;
+        self.window.addWatch(.{ .fd = bus.fd, .context = self, .ready = portalReady, .wants_write = portalWantsWrite });
+    }
+    self.portal.choose(want, title, .{ .context = self, .call = chose });
+}
+
+fn chose(context: *anyopaque, want: Portal.Want, path: []const u8) void {
+    const self: *Settings = @ptrCast(@alignCast(context));
+    switch (want) {
+        .picture => {
+            self.store.setWallpaper(path);
+            self.store.background = .picture;
+        },
+        .folder => {
+            self.store.setSlideshowFolder(path);
+            self.store.background = .slideshow;
+        },
+    }
+    self.save();
+    self.window.redraw();
+}
+
+fn portalReady(context: *anyopaque) void {
+    const self: *Settings = @ptrCast(@alignCast(context));
+    const bus = self.portal.bus orelse return;
+    bus.dispatch() catch {
+        log.warn("the session bus went away", .{});
+    };
+}
+
+fn portalWantsWrite(context: *anyopaque) bool {
+    const self: *Settings = @ptrCast(@alignCast(context));
+    return if (self.portal.bus) |bus| bus.wantsWrite() else false;
 }
 
 fn systemReady(context: *anyopaque) void {

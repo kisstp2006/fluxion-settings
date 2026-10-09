@@ -69,6 +69,12 @@ night_schedule: NightSchedule = .off,
 night_on: u16 = 21 * 60,
 night_off: u16 = 7 * 60,
 do_not_disturb: bool = false,
+/// A picture, or a slideshow of a folder's pictures.
+background: Background = .picture,
+slideshow_buffer: [512]u8 = undefined,
+slideshow_len: usize = 0,
+slideshow_minutes: u32 = 30,
+slideshow_shuffle: bool = false,
 /// Do not disturb by itself: the hours, an app filling the screen; and a
 /// summary of what was missed.
 focus: FocusRules = .{},
@@ -85,6 +91,8 @@ mic_mute_sound: bool = true,
 clipboard_history: bool = false,
 
 pub const NightSchedule = enum { off, sunset, hours };
+
+pub const Background = enum { picture, slideshow };
 
 pub const FocusRules = struct {
     hours: bool = false,
@@ -215,6 +223,15 @@ pub fn wallpaper(self: *const Store) ?[]const u8 {
     return if (self.wallpaper_len > 0) self.wallpaper_buffer[0..self.wallpaper_len] else null;
 }
 
+pub fn slideshowFolder(self: *const Store) ?[]const u8 {
+    return if (self.slideshow_len > 0) self.slideshow_buffer[0..self.slideshow_len] else null;
+}
+
+pub fn setSlideshowFolder(self: *Store, folder: []const u8) void {
+    self.slideshow_len = @min(folder.len, self.slideshow_buffer.len);
+    @memcpy(self.slideshow_buffer[0..self.slideshow_len], folder[0..self.slideshow_len]);
+}
+
 pub fn setWallpaper(self: *Store, file: []const u8) void {
     self.wallpaper_len = @min(file.len, self.wallpaper_buffer.len);
     @memcpy(self.wallpaper_buffer[0..self.wallpaper_len], file[0..self.wallpaper_len]);
@@ -307,6 +324,10 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "transparency")) l.transparency = !eql(u8, value, "false");
     } else if (eql(u8, section, "desktop")) {
         if (eql(u8, key, "wallpaper")) self.setWallpaper(value);
+        if (eql(u8, key, "background")) self.background = std.meta.stringToEnum(Background, value) orelse self.background;
+        if (eql(u8, key, "slideshow_folder")) self.setSlideshowFolder(value);
+        if (eql(u8, key, "slideshow_minutes")) self.slideshow_minutes = std.fmt.parseInt(u32, value, 10) catch self.slideshow_minutes;
+        if (eql(u8, key, "slideshow_shuffle")) self.slideshow_shuffle = eql(u8, value, "true");
         const d = &self.desktop_icons;
         if (eql(u8, key, "icon_recycle_bin")) d.recycle_bin = !eql(u8, value, "false");
         if (eql(u8, key, "icon_computer")) d.computer = eql(u8, value, "true");
@@ -435,6 +456,7 @@ pub fn save(self: *const Store, io: std.Io) void {
     ours_writer.writeAll(self.format(&format_buffer) catch return) catch return;
     // The shortcuts, after the rest: one line each.
     ours_writer.print("\n[clipboard]\nhistory={}\n", .{self.clipboard_history}) catch return;
+    ours_writer.print("\n[desktop]\nbackground={t}\nslideshow_folder={s}\nslideshow_minutes={d}\nslideshow_shuffle={}\n", .{ self.background, self.slideshowFolder() orelse "", self.slideshow_minutes, self.slideshow_shuffle }) catch return;
     const f = self.focus;
     ours_writer.print("\n[notifications]\nfocus_hours={}\nfocus_from={d:0>2}:{d:0>2}\nfocus_to={d:0>2}:{d:0>2}\nfocus_fullscreen={}\nfocus_summary={}\n", .{ f.hours, f.from / 60, f.from % 60, f.to / 60, f.to % 60, f.fullscreen, f.summary }) catch return;
     ours_writer.print("\n[shortcuts]\nmic_mute_sound={}\n", .{self.mic_mute_sound}) catch return;
