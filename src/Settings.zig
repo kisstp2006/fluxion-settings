@@ -63,6 +63,7 @@ pub const Sub = enum {
     about,
     background,
     colors,
+    themes,
     taskbar,
     desktop_icons,
     installed,
@@ -127,7 +128,7 @@ personalization_state: personalization.State = .{},
 pub fn init(self: *Settings, gpa: std.mem.Allocator, io: std.Io) !void {
     const store = Store.load(io);
     self.* = .{ .gpa = gpa, .io = io, .store = store };
-    try self.window.init(gpa, io, "Settings", "org.fluxion.Settings", modeOf(store.mode), widgets.Accent.from(widgets.argb(store.accent)), .{
+    try self.window.init(gpa, io, "Settings", "org.fluxion.Settings", modeOf(store.mode), widgets.Accent.from(widgets.argb(store.accent)), lookOf(store.look), .{
         .context = self,
         .draw = draw,
         .key = key,
@@ -156,6 +157,18 @@ pub fn deinit(self: *Settings) void {
     self.window.deinit();
 }
 
+/// The look as the widgets draw it.
+pub fn lookOf(look: Store.Look) widgets.theme.Look {
+    return .{
+        .style = switch (look.style) {
+            .win11 => .win11,
+            .win10 => .win10,
+        },
+        .rounded = look.rounded_corners,
+        .transparency = look.transparency,
+    };
+}
+
 fn modeOf(mode: Store.Mode) widgets.Mode {
     return switch (mode) {
         .light => .light,
@@ -182,6 +195,7 @@ pub fn openAt(self: *Settings, link: []const u8) void {
         .{ .name = "wifi", .page = .network, .sub = .none },
         .{ .name = "background", .page = .personalization, .sub = .background },
         .{ .name = "colors", .page = .personalization, .sub = .colors },
+        .{ .name = "themes", .page = .personalization, .sub = .themes },
         .{ .name = "taskbar", .page = .personalization, .sub = .taskbar },
         .{ .name = "desktopicons", .page = .personalization, .sub = .desktop_icons },
         .{ .name = "apps", .page = .apps, .sub = .installed },
@@ -250,7 +264,7 @@ pub fn save(self: *Settings) void {
 
 /// The look changed here: this window takes it too.
 pub fn retheme(self: *Settings) void {
-    self.window.setTheme(modeOf(self.store.mode), widgets.Accent.from(widgets.argb(self.store.accent)));
+    self.window.setTheme(modeOf(self.store.mode), widgets.Accent.from(widgets.argb(self.store.accent)), lookOf(self.store.look));
 }
 
 /// The file changed - written here, or by the shell from quick settings:
@@ -260,7 +274,7 @@ fn storeChanged(context: *anyopaque) void {
     if (!Store.changed(self.store_watch.?)) return;
     const before = self.store;
     self.store = Store.load(self.io);
-    if (before.mode != self.store.mode or before.accent != self.store.accent) self.retheme();
+    if (before.mode != self.store.mode or before.accent != self.store.accent or !std.meta.eql(before.look, self.store.look)) self.retheme();
     self.window.redraw();
 }
 
@@ -512,6 +526,7 @@ pub fn subTitle(sub: Sub) []const u8 {
         .shortcuts => "Keyboard shortcuts",
         .background => "Background",
         .colors => "Colors",
+        .themes => "Themes",
         .taskbar => "Taskbar",
         .desktop_icons => "Desktop icons",
         .installed => "Installed apps",
@@ -713,6 +728,7 @@ fn searchResults(self: *Settings, kit: *Kit, query: []const u8) void {
         .{ .page = .network, .sub = .none, .title = "Network & internet", .words = "wifi wi-fi ethernet connection network hálózat" },
         .{ .page = .personalization, .sub = .background, .title = "Background", .words = "wallpaper picture desktop háttér háttérkép" },
         .{ .page = .personalization, .sub = .colors, .title = "Colors", .words = "dark light mode theme accent colour color téma szín" },
+        .{ .page = .personalization, .sub = .themes, .title = "Themes", .words = "theme style windows 10 windows 11 look rounded corners square floating docked transparency téma stílus kinézet lekerekítés sarkok lebegő átlátszóság" },
         .{ .page = .personalization, .sub = .desktop_icons, .title = "Desktop icons", .words = "desktop icons recycle bin trash this pc computer network asztal ikonok lomtár" },
         .{ .page = .personalization, .sub = .taskbar, .title = "Taskbar", .words = "taskbar alignment left center search task view badges flashing show desktop tálca" },
         .{ .page = .apps, .sub = .installed, .title = "Installed apps", .words = "apps programs applications alkalmazások" },

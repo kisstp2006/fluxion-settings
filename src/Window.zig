@@ -137,7 +137,7 @@ wake_at_ms: i64 = 0,
 
 const button_left = 0x110;
 
-pub fn init(self: *Window, gpa: std.mem.Allocator, io: std.Io, title: [:0]const u8, app_id: [:0]const u8, mode: widgets.Mode, accent: widgets.theme.Accent, content: Content) !void {
+pub fn init(self: *Window, gpa: std.mem.Allocator, io: std.Io, title: [:0]const u8, app_id: [:0]const u8, mode: widgets.Mode, accent: widgets.theme.Accent, look: widgets.theme.Look, content: Content) !void {
     const display = try wl.Display.connect(null);
     errdefer display.disconnect();
     const font_files = try widgets.Fonts.readSystem(gpa, io) orelse {
@@ -150,7 +150,7 @@ pub fn init(self: *Window, gpa: std.mem.Allocator, io: std.Io, title: [:0]const 
         .display = display,
         .registry = try display.getRegistry(),
         .content = content,
-        .theme = .init(mode, accent),
+        .theme = .initLook(mode, accent, look),
         .font_files = font_files,
         .layout = .init(gpa),
     };
@@ -183,20 +183,7 @@ pub fn init(self: *Window, gpa: std.mem.Allocator, io: std.Io, title: [:0]const 
             if (self.fractional) |f| f.setListener(*Window, fractionalListener, self);
         }
     };
-    // Mica behind the whole window, where the compositor blurs: a region
-    // of all of it - and drawn see-through from then on.
-    if (self.background_effects) |manager| blk: {
-        const effect = manager.getBackgroundEffect(self.surface) catch break :blk;
-        const region = compositor.createRegion() catch {
-            effect.destroy();
-            break :blk;
-        };
-        defer region.destroy();
-        region.add(0, 0, 1 << 15, 1 << 15);
-        effect.setBlurRegion(region);
-        self.effect = effect;
-        self.mica = true;
-    }
+    self.updateMica();
     // The compositor's title bar, where it draws one.
     if (self.decorations) |manager| {
         self.decoration = manager.getToplevelDecoration(self.toplevel) catch null;
@@ -226,10 +213,33 @@ pub fn deinit(self: *Window) void {
     self.display.disconnect();
 }
 
-/// Change the look: light or dark, and the accent.
-pub fn setTheme(self: *Window, mode: widgets.Mode, accent: widgets.theme.Accent) void {
-    self.theme = .init(mode, accent);
+/// Change the look: light or dark, the accent, Windows 11's or 10's.
+pub fn setTheme(self: *Window, mode: widgets.Mode, accent: widgets.theme.Accent, look: widgets.theme.Look) void {
+    self.theme = .initLook(mode, accent, look);
+    self.updateMica();
+    self.surface.commit();
     self.redraw();
+}
+
+/// Mica behind the whole window, where the compositor blurs and the look
+/// has it - Windows 11's, with transparency on: a region of all of it, and
+/// drawn see-through from then on. Otherwise solid.
+fn updateMica(self: *Window) void {
+    const wants = self.theme.look.transparency and self.theme.look.style == .win11;
+    if (wants == self.mica) return;
+    if (!wants) {
+        if (self.effect) |e| e.setBlurRegion(null);
+        self.mica = false;
+        return;
+    }
+    const manager = self.background_effects orelse return;
+    const effect = self.effect orelse (manager.getBackgroundEffect(self.surface) catch return);
+    self.effect = effect;
+    const region = (self.compositor orelse return).createRegion() catch return;
+    defer region.destroy();
+    region.add(0, 0, 1 << 15, 1 << 15);
+    effect.setBlurRegion(region);
+    self.mica = true;
 }
 
 /// Wait on `watch` too, and call it when it is ready.
@@ -436,7 +446,7 @@ fn render(self: *Window) void {
         } else {
             self.layout.setPointer(-1000, -1000, false);
         }
-        self.layout.begin(.{ .size = .init(@floatFromInt(buffer.width), @floatFromInt(buffer.height)), .scale = s });
+        self.layout.begin(.{ .size = .init(@floatFromInt(buffer.width), @floatFromInt(buffer.height)), .scale = s, .rounding = self.theme.look.rounding() });
         kit.frame();
         self.content.draw(self.content.context, self, &kit);
         commands = self.layout.end() catch |err| {

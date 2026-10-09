@@ -9,6 +9,11 @@
 //! [appearance]
 //! mode=dark
 //! accent=#1F6FCC
+//! style=win11
+//! rounded_corners=true
+//! window_corners=true
+//! floating=true
+//! transparency=true
 //!
 //! [desktop]
 //! wallpaper=/usr/share/backgrounds/f45/default/f45-01-day.png
@@ -51,6 +56,9 @@ pub const Mode = enum { light, dark };
 mode: Mode = .dark,
 /// 0xAARRGGBB.
 accent: u32 = 0xFF1F6FCC,
+/// Personalization ▸ Themes: Windows 11's look or 10's, and its corners,
+/// panels and materials.
+look: Look = .{},
 wallpaper_buffer: [512]u8 = undefined,
 wallpaper_len: usize = 0,
 night_light: bool = false,
@@ -67,6 +75,20 @@ shortcuts: std.EnumArray(Shortcut, Combo) = .initFill(.{}),
 mic_mute_sound: bool = true,
 /// What is copied kept, for Super+V.
 clipboard_history: bool = false,
+
+pub const Look = struct {
+    style: Style = .win11,
+    /// The interface's corners: controls, menus, flyouts, the start menu.
+    rounded_corners: bool = true,
+    /// Windows' own corners.
+    window_corners: bool = true,
+    /// Start, search and the flyouts float clear of the taskbar.
+    floating: bool = true,
+    /// Acrylic and Mica.
+    transparency: bool = true,
+
+    pub const Style = enum { win11, win10 };
+};
 
 /// What a shortcut can do - as the shell knows them.
 pub const Shortcut = enum {
@@ -245,6 +267,12 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
     if (eql(u8, section, "appearance")) {
         if (eql(u8, key, "mode")) self.mode = std.meta.stringToEnum(Mode, value) orelse self.mode;
         if (eql(u8, key, "accent")) self.accent = parseColour(value) orelse self.accent;
+        const l = &self.look;
+        if (eql(u8, key, "style")) l.style = std.meta.stringToEnum(Look.Style, value) orelse l.style;
+        if (eql(u8, key, "rounded_corners")) l.rounded_corners = !eql(u8, value, "false");
+        if (eql(u8, key, "window_corners")) l.window_corners = !eql(u8, value, "false");
+        if (eql(u8, key, "floating")) l.floating = !eql(u8, value, "false");
+        if (eql(u8, key, "transparency")) l.transparency = !eql(u8, value, "false");
     } else if (eql(u8, section, "desktop")) {
         if (eql(u8, key, "wallpaper")) self.setWallpaper(value);
         const d = &self.desktop_icons;
@@ -291,6 +319,11 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\[appearance]
         \\mode={t}
         \\accent=#{X:0>6}
+        \\style={t}
+        \\rounded_corners={}
+        \\window_corners={}
+        \\floating={}
+        \\transparency={}
         \\
         \\[desktop]
         \\wallpaper={s}
@@ -319,12 +352,18 @@ pub fn format(self: *const Store, buffer: []u8) ![]const u8 {
         \\show_desktop_corner={}
         \\
     , .{
-        self.mode,                      self.accent & 0xFFFFFF,      self.wallpaper() orelse "",
-        self.desktop_icons.recycle_bin, self.desktop_icons.computer, self.desktop_icons.home,
-        self.desktop_icons.network,     self.night_light,            self.night_light_kelvin,
-        self.do_not_disturb,            self.screen_off_minutes,     self.taskbar.position,
-        self.taskbar.alignment,         self.taskbar.search,         self.taskbar.task_view,
-        self.taskbar.badges,            self.taskbar.flashing,       self.taskbar.show_desktop_corner,
+        self.mode,                        self.accent & 0xFFFFFF,
+        self.look.style,                  self.look.rounded_corners,
+        self.look.window_corners,         self.look.floating,
+        self.look.transparency,           self.wallpaper() orelse "",
+        self.desktop_icons.recycle_bin,   self.desktop_icons.computer,
+        self.desktop_icons.home,          self.desktop_icons.network,
+        self.night_light,                 self.night_light_kelvin,
+        self.do_not_disturb,              self.screen_off_minutes,
+        self.taskbar.position,            self.taskbar.alignment,
+        self.taskbar.search,              self.taskbar.task_view,
+        self.taskbar.badges,              self.taskbar.flashing,
+        self.taskbar.show_desktop_corner,
     });
 }
 
@@ -460,6 +499,7 @@ test "what is written is read back" {
     var store: Store = .{ .mode = .light, .accent = 0xFF0E8A7D, .night_light = true, .screen_off_minutes = 10 };
     store.taskbar.alignment = .left;
     store.taskbar.badges = false;
+    store.look = .{ .style = .win10, .window_corners = false, .transparency = false };
     store.setWallpaper("/usr/share/backgrounds/lake.jpg");
     var buffer: [4096]u8 = undefined;
     const text = try store.format(&buffer);
@@ -473,4 +513,9 @@ test "what is written is read back" {
     try std.testing.expectEqual(Taskbar.Alignment.left, back.taskbar.alignment);
     try std.testing.expect(!back.taskbar.badges);
     try std.testing.expect(back.taskbar.flashing);
+    try std.testing.expectEqual(Look.Style.win10, back.look.style);
+    try std.testing.expect(back.look.rounded_corners);
+    try std.testing.expect(!back.look.window_corners);
+    try std.testing.expect(back.look.floating);
+    try std.testing.expect(!back.look.transparency);
 }

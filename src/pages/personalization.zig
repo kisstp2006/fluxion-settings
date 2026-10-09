@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! Personalization: the wallpaper, and the colors - light or dark, and the
-//! accent everything chosen is lit with.
+//! Personalization: the wallpaper, the colors - light or dark, and the
+//! accent everything chosen is lit with - and the look: Windows 11's or
+//! 10's, round or square, floating or docked.
 
 const std = @import("std");
 
@@ -35,11 +36,13 @@ pub fn draw(app: *Settings, kit: *Kit) void {
     switch (app.sub) {
         .background => background(app, kit),
         .colors => colors(app, kit),
+        .themes => themes(app, kit),
         .taskbar => taskbar(app, kit),
         .desktop_icons => desktopIcons(app, kit),
         else => {
             app.linkCard(kit, .background, .image, "Background image");
             app.linkCard(kit, .colors, .color, "Light or dark, the accent color");
+            app.linkCard(kit, .themes, .paint_brush, "Windows 11 or Windows 10, rounded or square corners, floating panels");
             app.linkCard(kit, .taskbar, .tab_desktop, "Taskbar items, alignment, badges");
             app.linkCard(kit, .desktop_icons, .desktop, "Recycle Bin, This PC, and the other icons on the desktop");
         },
@@ -97,6 +100,224 @@ fn toggleCard(app: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Nam
     kit.cardBegin(id, .{ .icon = icon, .title = title, .description = description });
     if (kit.toggle(kit.print("{s}/toggle", .{id}), value, .{})) app.save();
     _ = kit.cardEnd(false);
+}
+
+// -------------------------------------------------------------------------
+// Themes
+// -------------------------------------------------------------------------
+
+/// The look of everything: Windows 11's or Windows 10's, each shown as it
+/// looks, and what can be changed within it. The whole desktop - the
+/// shell, the compositor's frames, this window - changes over at once.
+fn themes(app: *Settings, kit: *Kit) void {
+    const u = kit.ui;
+    const look = &app.store.look;
+    kit.section("Style");
+    {
+        u.open(.{ .width = .grow, .gap = 16 });
+        defer u.close();
+        styleCard(app, kit, .win11, "Windows 11", "Rounded corners, centred taskbar, floating start menu");
+        styleCard(app, kit, .win10, "Windows 10", "Square corners, docked start menu with live tiles, Action Center");
+    }
+
+    // Windows 10 is square and docked: what it has no say in is greyed, and
+    // says why.
+    const ten = look.style == .win10;
+    kit.section("Corners and surfaces");
+    lookCard(app, kit, "look/rounded", .square_multiple, "Rounded corners", if (ten) "Windows 10's are square" else "Menus, flyouts, the start menu and the controls in apps", &look.rounded_corners, ten);
+    lookCard(app, kit, "look/windows", .window, "Rounded window corners", if (ten) "Windows 10's are square" else "The corners of every window", &look.window_corners, ten);
+    lookCard(app, kit, "look/floating", .tab_desktop, "Floating panels", if (ten) "Windows 10's sit against the taskbar" else "Start, search, quick settings and notifications float clear of the taskbar; off, they sit against it", &look.floating, ten);
+    lookCard(app, kit, "look/transparency", .eye, "Transparency effects", "Windows and surfaces appear translucent", &look.transparency, false);
+}
+
+fn lookCard(app: *Settings, kit: *Kit, id: []const u8, icon: widgets.icons.Name, title: []const u8, description: []const u8, value: *bool, disabled: bool) void {
+    kit.cardBegin(id, .{ .icon = icon, .title = title, .description = description });
+    // What it would be is shown greyed: Windows 10's is off.
+    var shown = value.* and !disabled;
+    if (kit.toggle(kit.print("{s}/toggle", .{id}), if (disabled) &shown else value, .{ .disabled = disabled })) {
+        app.save();
+        app.retheme();
+    }
+    _ = kit.cardEnd(false);
+}
+
+/// One of the two looks to choose, as a picture of a desktop in it.
+fn styleCard(app: *Settings, kit: *Kit, style: Store.Look.Style, title: []const u8, description: []const u8) void {
+    const u = kit.ui;
+    const p = &kit.theme.palette;
+    const m = kit.theme.metrics;
+    const id = kit.print("style/{t}", .{style});
+    const chosen = app.store.look.style == style;
+    const hovered = u.isPointerOver(id);
+    u.open(.{
+        .id = id,
+        .width = .grow,
+        .direction = .top_to_bottom,
+        .padding = .all(8),
+        .gap = 10,
+        .background_color = if (hovered) p.control_secondary else p.card,
+        .corner_radius = .all(m.overlay_radius),
+        .border = if (chosen) .{ .color = p.accent, .width = .all(2) } else .{ .color = p.card_stroke, .width = .all(1) },
+        .focus = .{},
+    });
+    defer u.close();
+    preview(kit, style);
+    {
+        u.open(.{ .width = .grow, .gap = 10, .padding = .xy(4, 2), .align_y = .center });
+        defer u.close();
+        // The choice's mark: a filled circle with a tick, or a ring.
+        u.open(.{
+            .width = .fixed(20),
+            .height = .fixed(20),
+            .corner_radius = .all(10),
+            .background_color = if (chosen) p.accent else .transparent,
+            .border = if (chosen) null else .{ .color = p.control_strong_stroke, .width = .all(1) },
+            .align_x = .center,
+            .align_y = .center,
+        });
+        if (chosen) kit.icon(.checkmark, 12, p.text_on_accent, .regular);
+        u.close();
+        u.open(.{ .width = .grow, .direction = .top_to_bottom });
+        defer u.close();
+        kit.text(title, .body_strong, p.text_primary);
+        kit.text(description, .caption, p.text_secondary);
+    }
+    if (u.justReleased() and !chosen) {
+        app.store.look.style = style;
+        app.save();
+        app.retheme();
+    }
+}
+
+/// A desktop in the look `style`, small: the wallpaper, a window, the
+/// taskbar and the start menu open over it, each as that Windows has it.
+/// Drawn with its own corners, whatever the look in use.
+fn preview(kit: *Kit, style: Store.Look.Style) void {
+    const u = kit.ui;
+    const p = &kit.theme.palette;
+    const accent = kit.theme.accent;
+    const dark = kit.theme.mode == .dark;
+    const eleven = style == .win11;
+    const r: f32 = if (eleven) 4 else 0;
+    const base = if (dark) widgets.argb(0xFF202020) else widgets.argb(0xFFF3F3F3);
+    const bar = if (dark) widgets.argb(0xFF1C1C1C) else widgets.argb(0xFFEEEEEE);
+    const ink = if (dark) widgets.argb(0xFFFFFFFF) else widgets.argb(0xFF1A1A1A);
+    u.open(.{
+        .width = .grow,
+        .height = .fixed(156),
+        .direction = .top_to_bottom,
+        .corner_radius = .all(4),
+        .keep_corners = true,
+        .clip = .both,
+        .background_color = accent.dark2,
+        .gradient = .{ .to = accent.light1, .toward = .right },
+    });
+    defer u.close();
+
+    // A window, a little way in.
+    u.open(.{
+        .width = .fixed(150),
+        .height = .fixed(84),
+        .direction = .top_to_bottom,
+        .corner_radius = .all(r),
+        .keep_corners = true,
+        .background_color = base,
+        .border = .{ .color = if (eleven) ink.withAlpha(0.12) else accent.base, .width = .all(1) },
+        .floating = .{ .offset = .{ .x = if (eleven) 70 else 120, .y = 14 } },
+    });
+    {
+        // Its title bar and the close button: Windows 10's red square.
+        u.open(.{ .width = .grow, .height = .fixed(12), .align_y = .center, .padding = .trbl(0, 0, 0, 6), .gap = 3 });
+        u.empty(.{ .width = .fixed(18), .height = .fixed(3), .corner_radius = .all(1.5), .keep_corners = true, .background_color = ink.withAlpha(0.5) });
+        u.empty(.{ .width = .grow });
+        u.empty(.{ .width = .fixed(14), .height = .fixed(12), .background_color = if (eleven) .transparent else widgets.argb(0xFFE81123), .corner_radius = .corners(0, r, 0, 0), .keep_corners = true });
+        u.close();
+        u.open(.{ .width = .grow, .height = .grow, .padding = .all(6), .gap = 4, .direction = .top_to_bottom });
+        for (0..3) |i| u.empty(.{
+            .width = .fixed(@as(f32, if (i == 0) 90 else 60)),
+            .height = .fixed(5),
+            .corner_radius = .all(if (eleven) 2.5 else 0),
+            .keep_corners = true,
+            .background_color = ink.withAlpha(if (i == 0) 0.35 else 0.18),
+        });
+        u.close();
+    }
+    u.close();
+
+    // The start menu: Windows 11's floats in the middle; Windows 10's sits
+    // in the corner on the taskbar, its tiles in the accent.
+    u.open(.{
+        .width = .fixed(if (eleven) 92 else 104),
+        .height = .fixed(if (eleven) 96 else 108),
+        .direction = if (eleven) .top_to_bottom else .left_to_right,
+        .padding = .all(6),
+        .gap = 4,
+        .corner_radius = .all(r * 1.5),
+        .keep_corners = true,
+        .background_color = bar.withAlpha(0.97),
+        .border = if (eleven) .{ .color = ink.withAlpha(0.1), .width = .all(1) } else null,
+        .shadow = if (eleven) .{ .color = widgets.argb(0x50000000), .blur = 10, .offset = .{ .x = 0, .y = 3 } } else null,
+        .floating = if (eleven)
+            .{ .fractions = .{ .element_x = 0.5, .element_y = 1, .target_x = 0.5, .target_y = 1 }, .offset = .{ .x = 0, .y = -22 }, .z_index = 1 }
+        else
+            .{ .fractions = .{ .element_x = 0, .element_y = 1, .target_x = 0, .target_y = 1 }, .offset = .{ .x = 0, .y = -14 }, .z_index = 1 },
+    });
+    if (eleven) {
+        // A search field, and a grid of pinned apps.
+        u.empty(.{ .width = .grow, .height = .fixed(8), .corner_radius = .all(4), .keep_corners = true, .background_color = ink.withAlpha(0.08), .border = .{ .color = ink.withAlpha(0.12), .width = .all(1) } });
+        u.open(.{ .width = .grow, .wrap = true, .gap = 6, .wrap_gap = 6, .padding = .xy(4, 4) });
+        for (0..12) |i| u.empty(.{
+            .width = .fixed(10),
+            .height = .fixed(10),
+            .corner_radius = .all(2),
+            .keep_corners = true,
+            .background_color = if (i % 3 == 0) accent.light1 else if (i % 3 == 1) ink.withAlpha(0.35) else accent.base,
+        });
+        u.close();
+    } else {
+        // The app list, and the tiles.
+        u.open(.{ .width = .fixed(30), .height = .grow, .direction = .top_to_bottom, .gap = 4 });
+        for (0..7) |_| u.empty(.{ .width = .grow, .height = .fixed(4), .background_color = ink.withAlpha(0.3) });
+        u.close();
+        u.open(.{ .width = .grow, .wrap = true, .gap = 2, .wrap_gap = 2 });
+        for (0..9) |i| u.empty(.{
+            .width = .fixed(if (i == 0) 42 else 20),
+            .height = .fixed(20),
+            .background_color = if (i % 2 == 0) accent.base else accent.dark1,
+        });
+        u.close();
+    }
+    u.close();
+
+    // The taskbar along the bottom.
+    u.open(.{
+        .width = .grow,
+        .height = .fixed(if (eleven) 16 else 14),
+        .gap = 4,
+        .align_y = .center,
+        .padding = .xy(4, 0),
+        .background_color = bar,
+        .floating = .{ .fractions = .{ .element_x = 0, .element_y = 1, .target_x = 0, .target_y = 1 }, .z_index = 2 },
+    });
+    defer u.close();
+    if (eleven) u.empty(.{ .width = .grow });
+    // Start: Windows 11's four blue squares, Windows 10's white flag.
+    u.empty(.{ .width = .fixed(8), .height = .fixed(8), .corner_radius = .all(if (eleven) 1.5 else 0), .keep_corners = true, .background_color = if (eleven) accent.light1 else ink });
+    // Windows 10's search box beside it.
+    if (!eleven) u.empty(.{ .width = .fixed(50), .height = .fixed(10), .background_color = if (dark) widgets.argb(0xFF3A3A3A) else widgets.argb(0xFFFFFFFF), .border = .{ .color = ink.withAlpha(0.2), .width = .all(1) } });
+    for (0..5) |i| {
+        u.open(.{ .direction = .top_to_bottom, .align_x = .center, .gap = 1 });
+        u.empty(.{ .width = .fixed(8), .height = .fixed(8), .corner_radius = .all(if (eleven) 2 else 0), .keep_corners = true, .background_color = if (i == 1) accent.base else ink.withAlpha(0.45) });
+        // The running app's mark: Windows 11's short pill, Windows 10's
+        // bar across the button.
+        if (i == 1) u.empty(.{ .width = .fixed(if (eleven) 4 else 10), .height = .fixed(1.5), .corner_radius = .all(0.75), .keep_corners = true, .background_color = accent.light1 });
+        u.close();
+    }
+    u.empty(.{ .width = .grow });
+    // The clock - and Windows 10's Action Center button past it.
+    u.empty(.{ .width = .fixed(14), .height = .fixed(4), .background_color = ink.withAlpha(0.5) });
+    if (!eleven) u.empty(.{ .width = .fixed(6), .height = .fixed(6), .background_color = ink.withAlpha(0.5) });
+    _ = p;
 }
 
 fn background(app: *Settings, kit: *Kit) void {
