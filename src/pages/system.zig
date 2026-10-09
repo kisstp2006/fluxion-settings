@@ -123,6 +123,7 @@ pub fn draw(app: *Settings, kit: *Kit) void {
         .about => about(app, kit),
         .shortcuts => shortcuts(app, kit),
         .clipboard => clipboard(app, kit),
+        .storage => storage(app, kit),
         else => overview(app, kit),
     }
 }
@@ -132,6 +133,7 @@ fn overview(app: *Settings, kit: *Kit) void {
     app.linkCard(kit, .sound, .speaker_2, "Volume levels, output, input, sound devices");
     app.linkCard(kit, .notifications, .alert, "Alerts from apps and system, do not disturb");
     app.linkCard(kit, .power, .power, "Screen off, power mode");
+    app.linkCard(kit, .storage, .hard_drive, "Space used, Storage Sense");
     app.linkCard(kit, .clipboard, .clipboard_paste, "Cut and copy history, clear");
     app.linkCard(kit, .shortcuts, .keyboard, "Keys for the microphone, the sound, and apps");
     app.linkCard(kit, .about, .info, "Device specifications, the system");
@@ -702,4 +704,96 @@ test "a /proc line is read by its name" {
     const text = "processor\t: 0\nmodel name\t: AMD Ryzen 7 5800X 8-Core Processor\nMemTotal:       32768000 kB\n";
     try std.testing.expectEqualStrings("AMD Ryzen 7 5800X 8-Core Processor", field(text, "model name").?);
     try std.testing.expectEqualStrings("32768000 kB", field(text, "MemTotal").?);
+}
+
+// -------------------------------------------------------------------------
+// Storage
+// -------------------------------------------------------------------------
+
+var every_choice: Kit.Dropdown = .{};
+var trash_choice: Kit.Dropdown = .{};
+const every_names = [_][]const u8{ "Every day", "Every week", "Every month" };
+const every_days = [_]u32{ 1, 7, 30 };
+const trash_names = [_][]const u8{ "Never", "1 day", "14 days", "30 days", "60 days" };
+const trash_days = [_]u32{ 0, 1, 14, 30, 60 };
+
+const Statvfs = extern struct {
+    bsize: c_ulong,
+    frsize: c_ulong,
+    blocks: u64,
+    bfree: u64,
+    bavail: u64,
+    files: u64,
+    ffree: u64,
+    favail: u64,
+    fsid: c_ulong,
+    flag: c_ulong,
+    namemax: c_ulong,
+    type: c_uint,
+    spare: [5]c_int,
+};
+extern fn statvfs(path: [*:0]const u8, buf: *Statvfs) c_int;
+
+/// Storage, as Windows' page: how full the disk the home folder is on is,
+/// and Storage Sense - off until turned on - which empties what has been in
+/// the Recycle Bin long enough, and old thumbnails, by itself.
+fn storage(app: *Settings, kit: *Kit) void {
+    const u = kit.ui;
+    const p = &kit.theme.palette;
+    const g = &app.store.storage;
+    {
+        var stat: Statvfs = undefined;
+        const home = std.c.getenv("HOME") orelse "/";
+        if (statvfs(home, &stat) == 0) {
+            const total = stat.blocks * stat.frsize;
+            const free = stat.bavail * stat.frsize;
+            const used = total - free;
+            var used_buffer: [32]u8 = undefined;
+            var total_buffer: [32]u8 = undefined;
+            kit.cardBegin("storage/disk", .{ .icon = .hard_drive, .title = "Local disk", .description = kit.print("{s} used of {s}", .{ sizeText(used, &used_buffer), sizeText(total, &total_buffer) }) });
+            const share: f32 = if (total == 0) 0 else @floatCast(@as(f64, @floatFromInt(used)) / @as(f64, @floatFromInt(total)));
+            u.open(.{ .width = .fixed(220), .height = .fixed(8), .corner_radius = .all(4), .background_color = p.control_strong });
+            u.empty(.{ .width = .percent(share), .height = .grow, .corner_radius = .all(4), .background_color = if (share > 0.9) p.critical else p.accent });
+            u.close();
+            _ = kit.cardEnd(false);
+        }
+    }
+    kit.section("Storage management");
+    kit.cardBegin("storage/sense", .{ .icon = .leaf_two, .title = "Storage Sense", .description = "Automatically free up space: empty what has been in the Recycle Bin long enough, and old thumbnails" });
+    if (kit.toggle("storage/sense/toggle", &g.sense, .{})) app.save();
+    _ = kit.cardEnd(false);
+    kit.cardBegin("storage/every", .{ .icon = .timer, .title = "Run Storage Sense" });
+    if (!every_choice.open) every_choice.selected = for (every_days, 0..) |d, i| {
+        if (d >= g.every_days) break i;
+    } else every_days.len - 1;
+    if (kit.dropdown("storage/every/list", &every_choice, &every_names, .fixed(180))) {
+        g.every_days = every_days[every_choice.selected];
+        app.save();
+    }
+    _ = kit.cardEnd(false);
+    kit.cardBegin("storage/trash", .{ .icon = .delete, .title = "Delete files in my Recycle Bin if they have been there for over" });
+    if (!trash_choice.open) trash_choice.selected = for (trash_days, 0..) |d, i| {
+        if (d >= g.trash_days) break i;
+    } else trash_days.len - 1;
+    if (kit.dropdown("storage/trash/list", &trash_choice, &trash_names, .fixed(140))) {
+        g.trash_days = trash_days[trash_choice.selected];
+        app.save();
+    }
+    _ = kit.cardEnd(false);
+    u.open(.{ .padding = .trbl(12, 0, 0, 0) });
+    defer u.close();
+    if (kit.button("storage/run", "Run Storage Sense now", .{})) {
+        var ts: std.posix.timespec = undefined;
+        _ = std.c.clock_gettime(.REALTIME, &ts);
+        g.run = @intCast(ts.sec);
+        app.save();
+    }
+}
+
+fn sizeText(bytes: u64, buffer: []u8) []const u8 {
+    const units = [_][]const u8{ "bytes", "KB", "MB", "GB", "TB" };
+    var value: f64 = @floatFromInt(bytes);
+    var unit: usize = 0;
+    while (value >= 1024 and unit + 1 < units.len) : (unit += 1) value /= 1024;
+    return std.fmt.bufPrint(buffer, "{d:.1} {s}", .{ value, units[unit] }) catch "";
 }

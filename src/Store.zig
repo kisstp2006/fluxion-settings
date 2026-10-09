@@ -69,6 +69,9 @@ night_schedule: NightSchedule = .off,
 night_on: u16 = 21 * 60,
 night_off: u16 = 7 * 60,
 do_not_disturb: bool = false,
+/// Storage Sense: off until turned on; how often, how long the Recycle Bin
+/// keeps things; and "Run now", as a stamp that changes.
+storage: Storage = .{},
 /// How a mouse and a touchpad move and scroll.
 mouse: Pointer = .{ .tap_to_click = false },
 touchpad: Pointer = .{},
@@ -99,6 +102,13 @@ clipboard_history: bool = false,
 pub const NightSchedule = enum { off, sunset, hours };
 
 pub const Background = enum { picture, slideshow };
+
+pub const Storage = struct {
+    sense: bool = false,
+    every_days: u32 = 7,
+    trash_days: u32 = 30,
+    run: u64 = 0,
+};
 
 pub const Pointer = struct {
     speed: i32 = 0,
@@ -385,6 +395,12 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "tap_to_click")) t.tap_to_click = eql(u8, value, "true");
         if (eql(u8, key, "left_handed")) t.left_handed = eql(u8, value, "true");
         if (eql(u8, key, "disable_while_typing")) t.disable_while_typing = eql(u8, value, "true");
+    } else if (eql(u8, section, "storage")) {
+        const g = &self.storage;
+        if (eql(u8, key, "sense")) g.sense = eql(u8, value, "true");
+        if (eql(u8, key, "every_days")) g.every_days = std.fmt.parseInt(u32, value, 10) catch g.every_days;
+        if (eql(u8, key, "trash_days")) g.trash_days = std.fmt.parseInt(u32, value, 10) catch g.trash_days;
+        if (eql(u8, key, "run")) g.run = std.fmt.parseInt(u64, value, 10) catch 0;
     } else if (eql(u8, section, "keyboard")) {
         if (eql(u8, key, "layouts")) self.setLayouts(value);
     } else if (eql(u8, section, "clipboard")) {
@@ -509,6 +525,8 @@ pub fn save(self: *const Store, io: std.Io) void {
     ours_writer.print("\n[desktop]\nbackground={t}\nslideshow_folder={s}\nslideshow_minutes={d}\nslideshow_shuffle={}\n", .{ self.background, self.slideshowFolder() orelse "", self.slideshow_minutes, self.slideshow_shuffle }) catch return;
     ours_writer.print("\n[appearance]\ntitle_bar_material={t}\nwindow_material={t}\n", .{ self.look.title_bars, self.look.windows }) catch return;
     ours_writer.print("\n[taskbar]\npeek={}\ncombine={t}\n", .{ self.taskbar.peek, self.taskbar.combine }) catch return;
+    const g = self.storage;
+    ours_writer.print("\n[storage]\nsense={}\nevery_days={d}\ntrash_days={d}\nrun={d}\n", .{ g.sense, g.every_days, g.trash_days, g.run }) catch return;
     if (self.layouts_len > 0) ours_writer.print("\n[keyboard]\nlayouts={s}\n", .{self.layouts()}) catch return;
     inline for (.{ .{ "mouse", self.mouse }, .{ "touchpad", self.touchpad } }) |pair| {
         const t = pair[1];
