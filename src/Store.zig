@@ -69,6 +69,9 @@ night_schedule: NightSchedule = .off,
 night_on: u16 = 21 * 60,
 night_off: u16 = 7 * 60,
 do_not_disturb: bool = false,
+/// Do not disturb by itself: the hours, an app filling the screen; and a
+/// summary of what was missed.
+focus: FocusRules = .{},
 /// Nought for never.
 screen_off_minutes: u32 = 5,
 taskbar: Taskbar = .{},
@@ -82,6 +85,14 @@ mic_mute_sound: bool = true,
 clipboard_history: bool = false,
 
 pub const NightSchedule = enum { off, sunset, hours };
+
+pub const FocusRules = struct {
+    hours: bool = false,
+    from: u16 = 22 * 60,
+    to: u16 = 7 * 60,
+    fullscreen: bool = true,
+    summary: bool = true,
+};
 
 pub const Look = struct {
     style: Style = .win11,
@@ -311,6 +322,12 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "history")) self.clipboard_history = eql(u8, value, "true");
     } else if (eql(u8, section, "notifications")) {
         if (eql(u8, key, "do_not_disturb")) self.do_not_disturb = eql(u8, value, "true");
+        const f = &self.focus;
+        if (eql(u8, key, "focus_hours")) f.hours = eql(u8, value, "true");
+        if (eql(u8, key, "focus_from")) f.from = parseTime(value) orelse f.from;
+        if (eql(u8, key, "focus_to")) f.to = parseTime(value) orelse f.to;
+        if (eql(u8, key, "focus_fullscreen")) f.fullscreen = !eql(u8, value, "false");
+        if (eql(u8, key, "focus_summary")) f.summary = !eql(u8, value, "false");
     } else if (eql(u8, section, "power")) {
         if (eql(u8, key, "screen_off_minutes")) self.screen_off_minutes = std.fmt.parseInt(u32, value, 10) catch self.screen_off_minutes;
     } else if (eql(u8, section, "shortcuts")) {
@@ -418,6 +435,8 @@ pub fn save(self: *const Store, io: std.Io) void {
     ours_writer.writeAll(self.format(&format_buffer) catch return) catch return;
     // The shortcuts, after the rest: one line each.
     ours_writer.print("\n[clipboard]\nhistory={}\n", .{self.clipboard_history}) catch return;
+    const f = self.focus;
+    ours_writer.print("\n[notifications]\nfocus_hours={}\nfocus_from={d:0>2}:{d:0>2}\nfocus_to={d:0>2}:{d:0>2}\nfocus_fullscreen={}\nfocus_summary={}\n", .{ f.hours, f.from / 60, f.from % 60, f.to / 60, f.to % 60, f.fullscreen, f.summary }) catch return;
     ours_writer.print("\n[shortcuts]\nmic_mute_sound={}\n", .{self.mic_mute_sound}) catch return;
     for (std.enums.values(Shortcut)) |which| ours_writer.print("{t}={s}\n", .{ which, self.shortcuts.get(which).get(which) }) catch return;
     const ours = ours_writer.buffered();

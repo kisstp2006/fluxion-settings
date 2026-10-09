@@ -48,6 +48,8 @@ pub const State = struct {
     brightness: f32 = 0,
     night_strength: f32 = 50,
     night_on_choice: Kit.Dropdown = .{},
+    focus_from_choice: Kit.Dropdown = .{},
+    focus_to_choice: Kit.Dropdown = .{},
     night_off_choice: Kit.Dropdown = .{},
     /// Where the time zone is, for sunset and sunrise: read once.
     sun_place: ?Sun.Place = null,
@@ -515,8 +517,37 @@ fn readSinks(app: *Settings) void {
 // -------------------------------------------------------------------------
 
 fn notifications(app: *Settings, kit: *Kit) void {
+    const s = &app.system_state;
+    const f = &app.store.focus;
     kit.cardBegin("dnd", .{ .icon = .alert_snooze, .title = "Do not disturb", .description = "Notifications go straight to the notification center, without a toast" });
     if (kit.toggle("dnd/toggle", &app.store.do_not_disturb, .{})) app.save();
+    _ = kit.cardEnd(false);
+
+    // Focus assist's automatic rules, as Windows 10 named them.
+    kit.section("Turn on do not disturb automatically");
+    kit.cardBegin("dnd/hours", .{ .icon = .clock, .title = "During these times", .description = "Every day" });
+    if (kit.toggle("dnd/hours/toggle", &f.hours, .{})) app.save();
+    _ = kit.cardEnd(false);
+    if (f.hours) {
+        const u = kit.ui;
+        u.open(.{ .gap = 24, .padding = .trbl(4, 16, 12, 56), .align_y = .center });
+        defer u.close();
+        inline for (.{ .{ "From", "dnd/from", &s.focus_from_choice, &f.from }, .{ "To", "dnd/to", &s.focus_to_choice, &f.to } }) |row| {
+            u.open(.{ .gap = 8, .align_y = .center });
+            defer u.close();
+            kit.label(row[0], .body, kit.theme.palette.text_primary);
+            if (!row[2].open) row[2].selected = row[3].* / 30;
+            if (kit.dropdown(row[1], row[2], &half_hours, .fixed(110))) {
+                row[3].* = @intCast(row[2].selected * 30);
+                app.save();
+            }
+        }
+    }
+    kit.cardBegin("dnd/fullscreen", .{ .icon = .full_screen_maximize, .title = "When using an app in full screen mode", .description = "A game, a film: notifications wait until it is over" });
+    if (kit.toggle("dnd/fullscreen/toggle", &f.fullscreen, .{})) app.save();
+    _ = kit.cardEnd(false);
+    kit.cardBegin("dnd/summary", .{ .icon = .text_bullet_list, .title = "Show a summary of what I missed", .description = "When do not disturb turns off by itself" });
+    if (kit.toggle("dnd/summary/toggle", &f.summary, .{})) app.save();
     _ = kit.cardEnd(false);
 }
 
