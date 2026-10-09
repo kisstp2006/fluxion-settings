@@ -101,6 +101,10 @@ running: bool = true,
 dirty: bool = true,
 rendering: bool = false,
 frame_callback: ?*wl.Callback = null,
+/// What the last drawing handed over drew, hashed: the same again - the
+/// pointer moving over nothing that answers it - is not painted again, a
+/// whole window's worth of pixels saved.
+painted: ?u64 = null,
 /// Drawn into in turn: one the compositor has just let go of is not drawn
 /// into again at once.
 buffers: [3]?*ShmBuffer = .{ null, null, null },
@@ -441,9 +445,24 @@ fn render(self: *Window) void {
     const again = self.input_since_drawn;
     self.input_since_drawn = false;
 
-    self.painter.setImages(self.icons.images.items);
     // See-through under Mica; the theme's base colour where there is none.
     const clear: ui.Color = if (self.mica) .transparent else self.theme.palette.solid_base;
+    // Nothing drawn differently: nothing painted, nothing handed over. Asked
+    // to look again, it hears of the next frame all the same.
+    const hash = hashCommands(commands, buffer.width, buffer.height, self.icons.generation, clear);
+    if (self.painted == hash) {
+        if (again) {
+            self.dirty = true;
+            if (self.frame_callback == null) if (self.surface.frame()) |callback| {
+                callback.setListener(*Window, frameListener, self);
+                self.frame_callback = callback;
+            } else |_| {};
+            self.surface.commit();
+        }
+        return;
+    }
+    self.painted = hash;
+    self.painter.setImages(self.icons.images.items);
     self.painter.draw(.init(buffer.pixels, buffer.width, buffer.height), commands, clear) catch |err| {
         log.err("could not draw: {t}", .{err});
     };
@@ -460,6 +479,34 @@ fn render(self: *Window) void {
     buffer.busy = true;
     self.surface.commit();
     if (again) self.dirty = true;
+}
+
+/// What `commands` draw at `w` by `h`, with the pictures and the clear
+/// colour as they are, as one number.
+fn hashCommands(commands: []const ui.RenderCommand, w: u32, h: u32, pictures: u64, clear: ui.Color) u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(std.mem.asBytes(&[2]u32{ w, h }));
+    hasher.update(std.mem.asBytes(&pictures));
+    hasher.update(std.mem.asBytes(&clear));
+    for (commands) |c| {
+        hasher.update(std.mem.asBytes(&c.bounding_box));
+        hasher.update(std.mem.asBytes(&c.transform));
+        hasher.update(std.mem.asBytes(&c.z_index));
+        hasher.update(&.{@intFromEnum(c.config)});
+        switch (c.config) {
+            .text => |t| {
+                hasher.update(t.text);
+                hasher.update(std.mem.asBytes(&t.color));
+                hasher.update(std.mem.asBytes(&[_]u16{ t.font_size, t.letter_spacing, t.line_height, t.font }));
+                hasher.update(&.{ @intFromBool(t.silhouette), @intFromBool(t.outline != null) });
+                hasher.update(std.mem.asBytes(&t.first));
+                hasher.update(std.mem.asBytes(&t.effects.len));
+            },
+            .none, .scissor_start, .scissor_end => {},
+            inline else => |v| hasher.update(std.mem.asBytes(&v)),
+        }
+    }
+    return hasher.final();
 }
 
 fn frameListener(callback: *wl.Callback, event: wl.Callback.Event, self: *Window) void {

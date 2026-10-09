@@ -29,6 +29,9 @@ io: std.Io,
 /// What a texture number means, in the order the icons were loaded. Never
 /// reordered, so a number handed out stays good.
 images: std.ArrayList(raster.Image) = .empty,
+/// Counted up whenever a picture is put: a drawing that shows pictures by
+/// number tells from it that one may have changed.
+generation: u64 = 0,
 /// How many screen pixels each of the window's is: an icon asked for at 24
 /// is read at 36 for 150 %, and drawn into its 24 - which the drawing makes
 /// 36 - without being stretched.
@@ -154,6 +157,7 @@ fn screenPixels(self: *const Icons, size: u32) u32 {
 /// Keep a picture the shell made itself - a tray icon's pixels - as an
 /// image: in `slot`, in place of the one there, or in a new one.
 pub fn put(self: *Icons, slot: ?u32, picture: raster.Image) ?u32 {
+    self.generation +%= 1;
     if (slot) |at| {
         self.images.items[at].deinit(self.gpa);
         self.images.items[at] = picture;
