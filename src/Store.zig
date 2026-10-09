@@ -137,6 +137,8 @@ pub const Look = struct {
     floating: bool = true,
     /// Acrylic and Mica.
     transparency: bool = true,
+    /// Windows, menus and panels move.
+    animations: bool = true,
     /// What title bars are made of, and the glass of apps that ask for it.
     title_bars: Material = .solid,
     windows: Material = .auto,
@@ -368,6 +370,7 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
         if (eql(u8, key, "window_corners")) l.window_corners = !eql(u8, value, "false");
         if (eql(u8, key, "floating")) l.floating = !eql(u8, value, "false");
         if (eql(u8, key, "transparency")) l.transparency = !eql(u8, value, "false");
+        if (eql(u8, key, "animations")) l.animations = !eql(u8, value, "false");
         if (eql(u8, key, "title_bar_material")) l.title_bars = std.meta.stringToEnum(Look.Material, value) orelse l.title_bars;
         if (eql(u8, key, "window_material")) l.windows = std.meta.stringToEnum(Look.Material, value) orelse l.windows;
     } else if (eql(u8, section, "desktop")) {
@@ -523,7 +526,7 @@ pub fn save(self: *const Store, io: std.Io) void {
     // The shortcuts, after the rest: one line each.
     ours_writer.print("\n[clipboard]\nhistory={}\n", .{self.clipboard_history}) catch return;
     ours_writer.print("\n[desktop]\nbackground={t}\nslideshow_folder={s}\nslideshow_minutes={d}\nslideshow_shuffle={}\n", .{ self.background, self.slideshowFolder() orelse "", self.slideshow_minutes, self.slideshow_shuffle }) catch return;
-    ours_writer.print("\n[appearance]\ntitle_bar_material={t}\nwindow_material={t}\n", .{ self.look.title_bars, self.look.windows }) catch return;
+    ours_writer.print("\n[appearance]\ntitle_bar_material={t}\nwindow_material={t}\nanimations={}\n", .{ self.look.title_bars, self.look.windows, self.look.animations }) catch return;
     ours_writer.print("\n[taskbar]\npeek={}\ncombine={t}\n", .{ self.taskbar.peek, self.taskbar.combine }) catch return;
     const g = self.storage;
     ours_writer.print("\n[storage]\nsense={}\nevery_days={d}\ntrash_days={d}\nrun={d}\n", .{ g.sense, g.every_days, g.trash_days, g.run }) catch return;

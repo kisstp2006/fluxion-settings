@@ -142,6 +142,7 @@ fn themes(app: *Settings, kit: *Kit) void {
     lookCard(app, kit, "look/windows", .window, "Rounded window corners", if (ten) "Windows 10's are square" else "The corners of every window", &look.window_corners, ten);
     lookCard(app, kit, "look/floating", .tab_desktop, "Floating panels", if (ten) "Windows 10's sit against the taskbar" else "Start, search, quick settings and notifications float clear of the taskbar; off, they sit against it", &look.floating, ten);
     lookCard(app, kit, "look/transparency", .eye, "Transparency effects", "Windows and surfaces appear translucent", &look.transparency, false);
+    lookCard(app, kit, "look/animations", .play, "Animation effects", "Windows, menus and panels move; off, they are where they go at once - lighter, for games too", &look.animations, false);
 
     // What title bars are made of, and the glass of the apps that ask for
     // it - Settings among them.
