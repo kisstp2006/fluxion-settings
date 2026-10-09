@@ -19,6 +19,7 @@ const xdg = wayland.client.xdg;
 const zxdg = wayland.client.zxdg;
 const wp = wayland.client.wp;
 const zwlr = wayland.client.zwlr;
+const ext = wayland.client.ext;
 const xkb = @import("xkbcommon");
 
 const ui = @import("fluxion_ui");
@@ -62,6 +63,12 @@ fractional_manager: ?*wp.FractionalScaleManagerV1 = null,
 viewporter: ?*wp.Viewporter = null,
 /// The screens, for Display: where the compositor tells of them.
 output_manager: ?*zwlr.OutputManagerV1 = null,
+/// Glass: the compositor blurring what is behind the window - on Fluxion,
+/// the wallpaper alone, Mica.
+background_effects: ?*ext.BackgroundEffectManagerV1 = null,
+effect: ?*ext.BackgroundEffectSurfaceV1 = null,
+/// Whether the window is drawn see-through, for Mica to show.
+mica: bool = false,
 pointer: ?*wl.Pointer = null,
 keyboard: ?*wl.Keyboard = null,
 
@@ -169,6 +176,20 @@ pub fn init(self: *Window, gpa: std.mem.Allocator, io: std.Io, title: [:0]const 
             if (self.fractional) |f| f.setListener(*Window, fractionalListener, self);
         }
     };
+    // Mica behind the whole window, where the compositor blurs: a region
+    // of all of it - and drawn see-through from then on.
+    if (self.background_effects) |manager| blk: {
+        const effect = manager.getBackgroundEffect(self.surface) catch break :blk;
+        const region = compositor.createRegion() catch {
+            effect.destroy();
+            break :blk;
+        };
+        defer region.destroy();
+        region.add(0, 0, 1 << 15, 1 << 15);
+        effect.setBlurRegion(region);
+        self.effect = effect;
+        self.mica = true;
+    }
     // The compositor's title bar, where it draws one.
     if (self.decorations) |manager| {
         self.decoration = manager.getToplevelDecoration(self.toplevel) catch null;
@@ -183,6 +204,8 @@ pub fn deinit(self: *Window) void {
     if (self.decoration) |d| d.destroy();
     if (self.fractional) |f| f.destroy();
     if (self.viewport) |v| v.destroy();
+    if (self.effect) |e| e.destroy();
+    if (self.background_effects) |m| m.destroy();
     self.toplevel.destroy();
     self.xdg_surface.destroy();
     self.surface.destroy();
@@ -280,6 +303,8 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Win
                 self.fractional_manager = registry.bind(global.name, wp.FractionalScaleManagerV1, 1) catch return;
             } else if (std.mem.eql(u8, name, std.mem.span(zwlr.OutputManagerV1.interface.name))) {
                 self.output_manager = registry.bind(global.name, zwlr.OutputManagerV1, @min(global.version, 4)) catch return;
+            } else if (std.mem.eql(u8, name, std.mem.span(ext.BackgroundEffectManagerV1.interface.name))) {
+                self.background_effects = registry.bind(global.name, ext.BackgroundEffectManagerV1, 1) catch return;
             } else if (std.mem.eql(u8, name, std.mem.span(wp.Viewporter.interface.name))) {
                 self.viewporter = registry.bind(global.name, wp.Viewporter, 1) catch return;
             } else if (std.mem.eql(u8, name, std.mem.span(wl.Seat.interface.name))) {
@@ -417,7 +442,9 @@ fn render(self: *Window) void {
     self.input_since_drawn = false;
 
     self.painter.setImages(self.icons.images.items);
-    self.painter.draw(.init(buffer.pixels, buffer.width, buffer.height), commands, self.theme.palette.solid_base) catch |err| {
+    // See-through under Mica; the theme's base colour where there is none.
+    const clear: ui.Color = if (self.mica) .transparent else self.theme.palette.solid_base;
+    self.painter.draw(.init(buffer.pixels, buffer.width, buffer.height), commands, clear) catch |err| {
         log.err("could not draw: {t}", .{err});
     };
     self.surface.attach(buffer.wl_buffer, 0, 0);

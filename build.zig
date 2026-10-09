@@ -17,6 +17,8 @@ pub fn build(b: *std.Build) void {
     // window's size whatever the size drawn.
     scanner.addSystemProtocol("staging/fractional-scale/fractional-scale-v1.xml");
     scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
+    // Mica: the compositor blurs the wallpaper behind the window.
+    scanner.addSystemProtocol("staging/ext-background-effect/ext-background-effect-v1.xml");
     // The screens - their modes, scale and turn - as Display shows and sets
     // them. Not in wayland-protocols: wlroots' own, kept here.
     scanner.addCustomProtocol(b.path("protocol/wlr-output-management-unstable-v1.xml"));
@@ -24,6 +26,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wl_output", 4);
     scanner.generate("wp_fractional_scale_manager_v1", 1);
     scanner.generate("wp_viewporter", 1);
+    scanner.generate("ext_background_effect_manager_v1", 1);
     scanner.generate("zwlr_output_manager_v1", 4);
     scanner.generate("wl_shm", 1);
     scanner.generate("wl_seat", 7);
