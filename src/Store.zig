@@ -65,6 +65,8 @@ desktop_icons: DesktopIcons = .{},
 /// nothing for none.
 shortcuts: std.EnumArray(Shortcut, Combo) = .initFill(.{}),
 mic_mute_sound: bool = true,
+/// What is copied kept, for Super+V.
+clipboard_history: bool = false,
 
 /// What a shortcut can do - as the shell knows them.
 pub const Shortcut = enum {
@@ -80,11 +82,15 @@ pub const Shortcut = enum {
     settings,
     terminal,
     volume_mixer,
+    clipboard,
+    emoji,
 
     pub fn default(self: Shortcut) []const u8 {
         return switch (self) {
             .mic_mute => "Super+Alt+K",
             .volume_mixer => "Super+Ctrl+V",
+            .clipboard => "Super+V",
+            .emoji => "Super+period",
             .task_manager => "Ctrl+Shift+Escape",
             .files => "Super+E",
             .settings => "Super+I",
@@ -107,6 +113,8 @@ pub const Shortcut = enum {
             .settings => "Settings",
             .terminal => "Terminal",
             .volume_mixer => "Volume mixer",
+            .clipboard => "Clipboard history",
+            .emoji => "Emoji and symbols",
         };
     }
 };
@@ -247,6 +255,8 @@ fn take(self: *Store, section: []const u8, key: []const u8, value: []const u8) v
     } else if (eql(u8, section, "display")) {
         if (eql(u8, key, "night_light")) self.night_light = eql(u8, value, "true");
         if (eql(u8, key, "night_light_kelvin")) self.night_light_kelvin = std.fmt.parseInt(u32, value, 10) catch self.night_light_kelvin;
+    } else if (eql(u8, section, "clipboard")) {
+        if (eql(u8, key, "history")) self.clipboard_history = eql(u8, value, "true");
     } else if (eql(u8, section, "notifications")) {
         if (eql(u8, key, "do_not_disturb")) self.do_not_disturb = eql(u8, value, "true");
     } else if (eql(u8, section, "power")) {
@@ -327,6 +337,7 @@ pub fn save(self: *const Store, io: std.Io) void {
     var ours_writer: std.Io.Writer = .fixed(&ours_buffer);
     ours_writer.writeAll(self.format(&format_buffer) catch return) catch return;
     // The shortcuts, after the rest: one line each.
+    ours_writer.print("\n[clipboard]\nhistory={}\n", .{self.clipboard_history}) catch return;
     ours_writer.print("\n[shortcuts]\nmic_mute_sound={}\n", .{self.mic_mute_sound}) catch return;
     for (std.enums.values(Shortcut)) |which| ours_writer.print("{t}={s}\n", .{ which, self.shortcuts.get(which).get(which) }) catch return;
     const ours = ours_writer.buffered();

@@ -114,6 +114,7 @@ pub fn draw(app: *Settings, kit: *Kit) void {
         .power => power(app, kit),
         .about => about(app, kit),
         .shortcuts => shortcuts(app, kit),
+        .clipboard => clipboard(app, kit),
         else => overview(app, kit),
     }
 }
@@ -123,8 +124,33 @@ fn overview(app: *Settings, kit: *Kit) void {
     app.linkCard(kit, .sound, .speaker_2, "Volume levels, output, input, sound devices");
     app.linkCard(kit, .notifications, .alert, "Alerts from apps and system, do not disturb");
     app.linkCard(kit, .power, .power, "Screen off, power mode");
+    app.linkCard(kit, .clipboard, .clipboard_paste, "Cut and copy history, clear");
     app.linkCard(kit, .shortcuts, .keyboard, "Keys for the microphone, the sound, and apps");
     app.linkCard(kit, .about, .info, "Device specifications, the system");
+}
+
+// -------------------------------------------------------------------------
+// Clipboard
+// -------------------------------------------------------------------------
+
+fn clipboard(app: *Settings, kit: *Kit) void {
+    kit.cardBegin("clipboard/history", .{
+        .icon = .clipboard_paste,
+        .title = "Clipboard history",
+        .description = "Save multiple items to the clipboard to use later. Press Super+V to see your history and paste from it.",
+    });
+    if (kit.toggle("clipboard/history/toggle", &app.store.clipboard_history, .{})) app.save();
+    _ = kit.cardEnd(false);
+    kit.cardBegin("clipboard/clear", .{ .icon = .delete, .title = "Clear clipboard data", .description = "Clear everything except pinned items" });
+    if (kit.button("clipboard/clear/button", "Clear", .{})) {
+        // The shell keeps the history: told by a key it watches for.
+        var buffer: [24]u8 = undefined;
+        const stamp = std.fmt.bufPrint(&buffer, "{d}", .{@import("../Window.zig").nowMs()}) catch return;
+        Store.writeKey(app.io, "clipboard", "cleared", stamp);
+    }
+    _ = kit.cardEnd(false);
+    kit.cardBegin("clipboard/emoji", .{ .icon = .keyboard, .title = "Emoji and symbols", .description = "Press Super+. to put an emoji, a kaomoji or a symbol where you are typing" });
+    _ = kit.cardEnd(false);
 }
 
 // -------------------------------------------------------------------------
