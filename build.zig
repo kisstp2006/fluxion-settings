@@ -55,6 +55,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "wayland", .module = wayland },
             .{ .name = "xkbcommon", .module = xkbcommon },
             .{ .name = "fluxion_widgets", .module = widgets },
+            .{ .name = "fluxion_widgets_gpu", .module = widgets_dep.module("fluxion_widgets_gpu") },
             .{ .name = "fluxion_ui", .module = ui },
             .{ .name = "fluxion_ui_raster", .module = raster },
             .{ .name = "fluxion_image", .module = image },
