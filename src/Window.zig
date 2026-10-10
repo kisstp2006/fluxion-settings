@@ -104,6 +104,9 @@ painter: raster.Renderer = undefined,
 /// the CPU - no Vulkan, or the surface could not be drawn on with it.
 gpu: ?*gpu_mod.Gpu = null,
 target: ?gpu_mod.Target = null,
+/// The GPU being opened on a thread of its own: the window draws on the
+/// CPU until it is ready.
+opening: ?*gpu_mod.Opening = null,
 /// `FLUXION_PROFILE`: how long laying out and drawing take, said a second.
 profile: Profile = .{},
 icons: Icons = undefined,
@@ -142,7 +145,7 @@ repeat_key: ?u32 = null,
 repeat_at_ms: i64 = 0,
 repeat_delay_ms: i32 = 400,
 repeat_rate_ms: i32 = 33,
-watches: [6]Watch = undefined,
+watches: [8]Watch = undefined,
 watch_count: usize = 0,
 /// When to draw again with nothing else happening - a countdown's next
 /// second - or nought.
@@ -171,7 +174,8 @@ pub fn init(self: *Window, gpa: std.mem.Allocator, io: std.Io, title: [:0]const 
     self.painter = try .init(gpa, &self.fonts.text);
     const faces = self.fonts.faces();
     try self.painter.setFaces(&faces);
-    self.gpu = gpu_mod.Gpu.open(gpa, &faces, &.{}) catch null;
+    self.opening = gpu_mod.Opening.start(gpa, &faces, &.{});
+    if (self.opening) |o| self.addWatch(.{ .fd = o.fd(), .context = self, .ready = gpuOpened });
     self.profile.on = std.c.getenv("FLUXION_PROFILE") != null;
     self.icons = .init(gpa, io, null);
     self.layout.setMeasurer(self.fonts.measurer());
@@ -208,6 +212,7 @@ pub fn init(self: *Window, gpa: std.mem.Allocator, io: std.Io, title: [:0]const 
 }
 
 pub fn deinit(self: *Window) void {
+    if (self.opening) |o| o.destroy();
     if (self.target) |*t| t.deinit();
     if (self.gpu) |g| g.deinit();
     if (self.frame_callback) |c| c.destroy();
@@ -287,6 +292,32 @@ pub fn addWatch(self: *Window, watch: Watch) void {
     self.watch_count += 1;
 }
 
+/// Stop waiting on `fd`. Its slot stays, with nothing in it to wait on:
+/// the loop may be going through the slots as it is said.
+pub fn removeWatch(self: *Window, fd: std.c.fd_t) void {
+    for (self.watches[0..self.watch_count]) |*w| if (w.fd == fd) {
+        w.fd = -1;
+    };
+}
+
+/// The GPU is open, or could not be: drawn on from the next frame.
+fn gpuOpened(context: *anyopaque) void {
+    const self: *Window = @ptrCast(@alignCast(context));
+    const opening = self.opening orelse return;
+    switch (opening.take()) {
+        .waiting => return,
+        .ready => |gpu| {
+            self.gpu = gpu;
+            self.painted = null;
+            self.redraw();
+        },
+        .failed => {},
+    }
+    self.removeWatch(opening.fd());
+    opening.destroy();
+    self.opening = null;
+}
+
 /// Run until the window is closed.
 pub fn run(self: *Window) !void {
     while (self.running) {
@@ -300,20 +331,25 @@ pub fn run(self: *Window) !void {
             const until: i32 = @intCast(std.math.clamp(self.wake_at_ms - nowMs(), 0, 1000));
             timeout = if (timeout < 0) until else @min(timeout, until);
         }
-        var fds: [7]posix.pollfd = undefined;
+        var fds: [9]posix.pollfd = undefined;
         fds[0] = .{ .fd = self.display.getFd(), .events = posix.POLL.IN, .revents = 0 };
         for (self.watches[0..self.watch_count], 1..) |w, i| {
             const write = if (w.wants_write) |f| f(w.context) else false;
             fds[i] = .{ .fd = w.fd, .events = if (write) posix.POLL.IN | posix.POLL.OUT else posix.POLL.IN, .revents = 0 };
         }
         _ = posix.poll(fds[0 .. 1 + self.watch_count], timeout) catch 0;
+        // The display read, or the read given up, before anything else is
+        // answered: what answers may draw, and drawing on the GPU talks to
+        // the display on a queue of its own - which waits for a read
+        // prepared here to be done, and would wait for ever.
+        const display_ready = fds[0].revents != 0;
+        if (display_ready) {
+            if (self.display.readEvents() != .SUCCESS) return error.ConnectionLost;
+        } else self.display.cancelRead();
         for (self.watches[0..self.watch_count], 1..) |w, i| {
             if (fds[i].revents != 0) w.ready(w.context);
         }
-        if (fds[0].revents != 0) {
-            if (self.display.readEvents() != .SUCCESS) return error.ConnectionLost;
-        } else {
-            self.display.cancelRead();
+        if (!display_ready) {
             // The caret blinks; a key held types again.
             if (self.repeat_key) |code| if (nowMs() >= self.repeat_at_ms) {
                 self.repeat_at_ms = nowMs() + self.repeat_rate_ms;
@@ -561,6 +597,12 @@ fn render(self: *Window) void {
             return;
         };
         self.profile.stop(.gpu, drawn);
+        // Drawn on the CPU until the GPU was ready: those buffers are not
+        // needed any more.
+        for (&self.buffers) |*slot| if (slot.*) |b| {
+            b.destroy(self.gpa);
+            slot.* = null;
+        };
     } else if (buffer) |b| {
         self.painter.setImages(self.icons.images.items);
         self.painter.draw(.init(b.pixels, b.width, b.height), commands, clear) catch |err| {
